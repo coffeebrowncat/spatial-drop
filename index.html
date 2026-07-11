@@ -1,91 +1,109 @@
-<body style="font-family: sans-serif; text-align: center; padding: 50px; height: 100vh; margin: 0; background-color: #111; color: white; overflow: hidden;">
+<body style="font-family: sans-serif; text-align: center; padding: 50px; min-height: 100vh; margin: 0; background-color: #111; color: white; overflow-x: hidden;">
 
     <h1>spatial drop</h1>
     <p>status: <span id="status" style="color: red;">disconnected</span></p>
 
-    <input type="text" id="messageBox" placeholder="type a message, then swipe up anywhere..." style="padding: 15px; width: 80%; border-radius: 8px; border: none; margin-top: 50px;">
+    <div style="margin-top: 30px; padding: 20px; background: #222; border-radius: 10px; display: inline-block;">
+        <p style="margin: 0 0 10px 0; color: #888;">1. pick a photo</p>
+        <input type="file" id="filePicker" accept="image/*" style="color: white;">
+    </div>
     
-    <p style="margin-top: 100px; color: #555;">swipe UP anywhere on this screen to drop</p>
+    <p style="margin-top: 50px; color: #555; font-size: 1.2rem;">2. swipe UP anywhere to drop</p>
+
+    <div id="dropZone" style="margin-top: 40px;"></div>
 
     <script>
-    // --- 1. the network hookup ---
-    
-    // figure out the laptop's ip automatically so we don't have to hardcode it every time we change wi-fi
     const laptopip = window.location.hostname;
-    
-    // plug into the node server we built on port 3000
     const ws = new WebSocket(`ws://${laptopip}:3000`);
 
-    // when the handshake actually works
     ws.onopen = () => {
         console.log('we are in.');
-        const statusEl = document.getElementById('status');
-        statusEl.innerText = 'connected. ready for drop.';
-        statusEl.style.color = 'green';
+        document.getElementById('status').innerText = 'connected. ready for drop.';
+        document.getElementById('status').style.color = 'green';
     };
 
-    // if the corporate network bouncers block us
-    ws.onerror = (error) => {
-        console.error('socket died:', error);
-        alert('network blocked. check console.');
+    // --- the image crusher (base64) ---
+    let payload = "";
+
+    // when you select a photo from your camera roll
+    document.getElementById('filePicker').addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        const reader = new FileReader();
+        
+        // when it finishes reading the file, save the massive text string
+        reader.onload = (event) => {
+            payload = event.target.result; // this is the base64 string
+            document.getElementById('status').innerText = 'photo loaded. ready to flick.';
+            document.getElementById('status').style.color = 'yellow';
+        };
+        
+        // start reading it
+        reader.readAsDataURL(file);
+    });
+
+
+    // --- the receiver (laptop side) ---
+    // when anyone in the room shoots a payload, this catches it
+    ws.onmessage = (event) => {
+        const incomingData = event.data;
+        
+        // if the text string starts with 'data:image', it's a photo
+        if (incomingData.startsWith('data:image')) {
+            console.log('incoming photo caught!');
+            
+            // create an image tag and slap the string into it
+            const img = document.createElement('img');
+            img.src = incomingData;
+            img.style.maxWidth = '80%';
+            img.style.maxHeight = '400px';
+            img.style.borderRadius = '12px';
+            img.style.marginTop = '20px';
+            img.style.boxShadow = '0px 10px 30px rgba(0,255,255,0.2)'; // nice glowing effect
+            
+            // drop it onto the page
+            const dropZone = document.getElementById('dropZone');
+            dropZone.innerHTML = ''; // clear the old photo
+            dropZone.appendChild(img);
+        }
     };
 
-    // --- 2. the swipe math ---
-    
-    // placeholders to track where the finger lands vs where it leaves
+
+    // --- the swipe math ---
     let startY = 0;
     let endY = 0;
-
-    // listen to the whole screen so you don't have to swipe in a tiny box
     const screen = document.body;
 
-    // the exact millisecond you touch the glass
     screen.addEventListener('touchstart', (e) => {
-        // grab the y-coordinate. 
-        // remember: top of the screen is 0, bottom is a high number (like 800)
         startY = e.touches[0].clientY;
     });
 
-    // while you're dragging your finger
     screen.addEventListener('touchmove', (e) => {
-        // keep updating the end coordinate
         endY = e.touches[0].clientY;
     });
 
-    // the millisecond you let go
     screen.addEventListener('touchend', () => {
-        // do the math. 
-        // if you start at the bottom (600) and swipe up to the top (200), 600 - 200 = 400.
-        // a positive number means you swiped UP.
         const distance = startY - endY;
 
-        // if you swiped up more than 100 pixels, count it as a real flick (ignores accidental taps)
         if (distance > 100) {
-            
-            const messageInput = document.getElementById('messageBox');
-            const payload = messageInput.value;
-
-            // make sure we are actually connected and didn't just swipe an empty text box
             if (ws.readyState === WebSocket.OPEN && payload !== '') {
                 
-                // shoot it to the laptop
+                // shoot the massive image string to the server
                 ws.send(payload);
                 
-                // visual ui flash so we know it worked on the phone
-                document.getElementById('status').innerText = 'payload dropped.';
+                document.getElementById('status').innerText = 'photo dropped.';
                 document.getElementById('status').style.color = '#00ffff'; 
                 
-                // clear the text box for the next one
-                messageInput.value = ''; 
+                // clear the payload so you don't accidentally send it twice
+                payload = '';
+                document.getElementById('filePicker').value = ''; 
                 
-                // reset the text back to normal after 2 seconds
                 setTimeout(() => {
                     document.getElementById('status').innerText = 'connected. ready for drop.';
                     document.getElementById('status').style.color = 'green';
                 }, 2000);
                 
             } else {
-                console.log('either not connected or you tried to send nothing');
+                console.log('no photo loaded or socket dead');
             }
         }
     });
