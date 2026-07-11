@@ -1,42 +1,93 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Spatial Drop Test</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-</head>
-<body style="font-family: sans-serif; text-align: center; padding: 50px;">
+<body style="font-family: sans-serif; text-align: center; padding: 50px; height: 100vh; margin: 0; background-color: #111; color: white; overflow: hidden;">
 
-    <h1>Spatial Drop 📡</h1>
-    <p>Status: <span id="status">Disconnected 🔴</span></p>
+    <h1>spatial drop</h1>
+    <p>status: <span id="status" style="color: red;">disconnected</span></p>
 
-    <input type="text" id="messageBox" placeholder="Type a test message..." style="padding: 10px; width: 80%;">
-    <br><br>
-    <button onclick="sendMessage()" style="padding: 15px 30px; font-size: 16px;">Shoot it to the Laptop</button>
+    <input type="text" id="messageBox" placeholder="type a message, then swipe up anywhere..." style="padding: 15px; width: 80%; border-radius: 8px; border: none; margin-top: 50px;">
+    
+    <p style="margin-top: 100px; color: #555;">swipe UP anywhere on this screen to drop</p>
 
     <script>
+    // --- 1. the network hookup ---
+    
+    // figure out the laptop's ip automatically so we don't have to hardcode it every time we change wi-fi
     const laptopip = window.location.hostname;
-    // adding the protocol explicitly
+    
+    // plug into the node server we built on port 3000
     const ws = new WebSocket(`ws://${laptopip}:3000`);
 
+    // when the handshake actually works
     ws.onopen = () => {
-        console.log('websocket connection open');
-        document.getElementById('status').innerText = 'connected';
+        console.log('we are in.');
+        const statusEl = document.getElementById('status');
+        statusEl.innerText = 'connected. ready for drop.';
+        statusEl.style.color = 'green';
     };
 
+    // if the corporate network bouncers block us
     ws.onerror = (error) => {
-        // this will show us exactly why it failed
-        console.error('websocket error detail:', error);
-        alert('websocket failed! check console for detail');
+        console.error('socket died:', error);
+        alert('network blocked. check console.');
     };
 
-    function sendMessage() {
-        const message = document.getElementById('messageBox').value;
-        if (ws.readyState === WebSocket.OPEN) {
-            ws.send(message);
-        } else {
-            alert('websocket not ready. state is: ' + ws.readyState);
+    // --- 2. the swipe math ---
+    
+    // placeholders to track where the finger lands vs where it leaves
+    let startY = 0;
+    let endY = 0;
+
+    // listen to the whole screen so you don't have to swipe in a tiny box
+    const screen = document.body;
+
+    // the exact millisecond you touch the glass
+    screen.addEventListener('touchstart', (e) => {
+        // grab the y-coordinate. 
+        // remember: top of the screen is 0, bottom is a high number (like 800)
+        startY = e.touches[0].clientY;
+    });
+
+    // while you're dragging your finger
+    screen.addEventListener('touchmove', (e) => {
+        // keep updating the end coordinate
+        endY = e.touches[0].clientY;
+    });
+
+    // the millisecond you let go
+    screen.addEventListener('touchend', () => {
+        // do the math. 
+        // if you start at the bottom (600) and swipe up to the top (200), 600 - 200 = 400.
+        // a positive number means you swiped UP.
+        const distance = startY - endY;
+
+        // if you swiped up more than 100 pixels, count it as a real flick (ignores accidental taps)
+        if (distance > 100) {
+            
+            const messageInput = document.getElementById('messageBox');
+            const payload = messageInput.value;
+
+            // make sure we are actually connected and didn't just swipe an empty text box
+            if (ws.readyState === WebSocket.OPEN && payload !== '') {
+                
+                // shoot it to the laptop
+                ws.send(payload);
+                
+                // visual ui flash so we know it worked on the phone
+                document.getElementById('status').innerText = 'payload dropped.';
+                document.getElementById('status').style.color = '#00ffff'; 
+                
+                // clear the text box for the next one
+                messageInput.value = ''; 
+                
+                // reset the text back to normal after 2 seconds
+                setTimeout(() => {
+                    document.getElementById('status').innerText = 'connected. ready for drop.';
+                    document.getElementById('status').style.color = 'green';
+                }, 2000);
+                
+            } else {
+                console.log('either not connected or you tried to send nothing');
+            }
         }
-    }
-</script>
+    });
+    </script>
 </body>
-</html>
