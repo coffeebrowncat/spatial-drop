@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Spatial Drop Test</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body style="font-family: sans-serif; text-align: center; padding: 50px;">
+
+    <h1>Spatial Drop 📡</h1>
+    <p>Status: <span id="status">Disconnected 🔴</span></p>
+
+    <input type="text" id="messageBox" placeholder="Type a test message..." style="padding: 10px; width: 80%;">
+    <br><br>
+    <button onclick="sendMessage()" style="padding: 15px 30px; font-size: 16px;">Shoot it to the Laptop</button>
+
+    <script>
+    const laptopip = window.location.hostname;
+    // adding the protocol explicitly
+    const ws = new WebSocket(`ws://${laptopip}:3000`);
+
+    ws.onopen = () => {
+        console.log('websocket connection open');
+        document.getElementById('status').innerText = 'connected';
+    };
+
+    ws.onerror = (error) => {
+        // this will show us exactly why it failed
+        console.error('websocket error detail:', error);
+        alert('websocket failed! check console for detail');
+    };
+
+    function sendMessage() {
+        const message = document.getElementById('messageBox').value;
+        if (ws.readyState === WebSocket.OPEN) {
+            ws.send(message);
+        } else {
+            alert('websocket not ready. state is: ' + ws.readyState);
+        }
+    }
+</script>
+</body>
+</html>
