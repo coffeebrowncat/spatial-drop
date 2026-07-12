@@ -1,3 +1,19 @@
+const { setServers } = require("node:dns/promises");
+setServers(["8.8.8.8", "1.1.1.1"]);
+
+// 1. load your hidden variables
+require('dotenv').config();
+const mongoose = require('mongoose');
+
+// 2. connect to the analytics firehose (mongodb atlas)
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => {
+    console.log('mongo analytics firehose: ONLINE');
+  })
+  .catch((err) => {
+    console.error('mongo connection failed:', err);
+  });
+
 const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
