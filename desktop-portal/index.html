@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <style>
+        body {
+            margin: 0;
+            /* The magic frosted glass effect */
+            background: rgba(255, 255, 255, 0.1);
+            /* light white, very transparent */
+            backdrop-filter: blur(20px);
+            /* the "frosted" blur */
+            -webkit-backdrop-filter: blur(20px);
+            /* safari/electron support */
+
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            /* faint border */
+            border-radius: 50%;
+            /* circular */
+
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: rgba(255, 255, 255, 0.8);
+            font-family: sans-serif;
+            height: 100vh;
+            width: 100vw;
+
+            /* prevents the mouse from clicking through it accidentally */
+            pointer-events: auto;
+        }
+
+        @keyframes shake {
+    0%, 100% { transform: rotate(0deg); }
+    25% { transform: rotate(-5deg); }
+    75% { transform: rotate(5deg); }
+}
+
+.shaking {
+    animation: shake 0.5s ease-in-out infinite;
+}
+    </style>
+</head>
+
+<body>
+    <div>PORTAL</div>
+</body>
+
+</html>
