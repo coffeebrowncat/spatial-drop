@@ -1,4 +1,5 @@
-<body style="font-family: sans-serif; text-align: center; padding: 50px; min-height: 100vh; margin: 0; background-color: #111; color: white; overflow-x: hidden;">
+<body
+    style="font-family: sans-serif; text-align: center; padding: 50px; min-height: 100vh; margin: 0; background-color: #111; color: white; overflow-x: hidden;">
 
     <h1>spatial drop</h1>
     <p>status: <span id="status" style="color: red;">disconnected</span></p>
@@ -7,105 +8,58 @@
         <p style="margin: 0 0 10px 0; color: #888;">1. pick a photo</p>
         <input type="file" id="filePicker" accept="image/*" style="color: white;">
     </div>
-    
+
     <p style="margin-top: 50px; color: #555; font-size: 1.2rem;">2. swipe UP anywhere to drop</p>
 
-    <div id="dropZone" style="margin-top: 40px;"></div>
-
     <script>
-    const laptopip = window.location.hostname;
-    const ws = new WebSocket(`ws://${laptopip}:3000`);
+        const laptopip = window.location.hostname;
+        const ws = new WebSocket(`ws://${laptopip}:3000`);
 
-    ws.onopen = () => {
-        console.log('we are in.');
-        document.getElementById('status').innerText = 'connected. ready for drop.';
-        document.getElementById('status').style.color = 'green';
-    };
-
-    // --- the image crusher (base64) ---
-    let payload = "";
-
-    // when you select a photo from your camera roll
-    document.getElementById('filePicker').addEventListener('change', (e) => {
-        const file = e.target.files[0];
-        const reader = new FileReader();
-        
-        // when it finishes reading the file, save the massive text string
-        reader.onload = (event) => {
-            payload = event.target.result; // this is the base64 string
-            document.getElementById('status').innerText = 'photo loaded. ready to flick.';
-            document.getElementById('status').style.color = 'yellow';
+        ws.onopen = () => {
+            console.log('we are in.');
+            document.getElementById('status').innerText = 'connected. ready for drop.';
+            document.getElementById('status').style.color = 'green';
+            // Join the room using the same ID as the desktop app
+            ws.send(JSON.stringify({ type: 'join', pin: 'magic-room' }));
         };
-        
-        // start reading it
-        reader.readAsDataURL(file);
-    });
 
+        let payload = "";
 
-    // --- the receiver (laptop side) ---
-    // when anyone in the room shoots a payload, this catches it
-    ws.onmessage = (event) => {
-        const incomingData = event.data;
-        
-        // if the text string starts with 'data:image', it's a photo
-        if (incomingData.startsWith('data:image')) {
-            console.log('incoming photo caught!');
-            
-            // create an image tag and slap the string into it
-            const img = document.createElement('img');
-            img.src = incomingData;
-            img.style.maxWidth = '80%';
-            img.style.maxHeight = '400px';
-            img.style.borderRadius = '12px';
-            img.style.marginTop = '20px';
-            img.style.boxShadow = '0px 10px 30px rgba(0,255,255,0.2)'; // nice glowing effect
-            
-            // drop it onto the page
-            const dropZone = document.getElementById('dropZone');
-            dropZone.innerHTML = ''; // clear the old photo
-            dropZone.appendChild(img);
-        }
-    };
+        document.getElementById('filePicker').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            const reader = new FileReader();
 
+            reader.onload = (event) => {
+                payload = event.target.result;
+                document.getElementById('status').innerText = 'photo loaded. ready to flick.';
+                document.getElementById('status').style.color = 'yellow';
+            };
+            reader.readAsDataURL(file);
+        });
 
-    // --- the swipe math ---
-    let startY = 0;
-    let endY = 0;
-    const screen = document.body;
+        let startY = 0;
+        document.body.addEventListener('touchstart', (e) => startY = e.touches[0].clientY);
+        document.body.addEventListener('touchend', (e) => {
+            const endY = e.changedTouches[0].clientY;
+            const distance = startY - endY;
 
-    screen.addEventListener('touchstart', (e) => {
-        startY = e.touches[0].clientY;
-    });
+            if (distance > 100 && ws.readyState === WebSocket.OPEN && payload !== '') {
+                // ONLY ONE SEND COMMAND: Structured and reliable
+                const message = JSON.stringify({
+                    type: 'file_data',
+                    data: payload,
+                    timestamp: Date.now()
+                });
 
-    screen.addEventListener('touchmove', (e) => {
-        endY = e.touches[0].clientY;
-    });
+                ws.send(message);
 
-    screen.addEventListener('touchend', () => {
-        const distance = startY - endY;
-
-        if (distance > 100) {
-            if (ws.readyState === WebSocket.OPEN && payload !== '') {
-                
-                // shoot the massive image string to the server
-                ws.send(payload);
-                
+                console.log("Transmission sent to server...");
                 document.getElementById('status').innerText = 'photo dropped.';
-                document.getElementById('status').style.color = '#00ffff'; 
-                
-                // clear the payload so you don't accidentally send it twice
-                payload = '';
-                document.getElementById('filePicker').value = ''; 
-                
-                setTimeout(() => {
-                    document.getElementById('status').innerText = 'connected. ready for drop.';
-                    document.getElementById('status').style.color = 'green';
-                }, 2000);
-                
-            } else {
-                console.log('no photo loaded or socket dead');
+                document.getElementById('status').style.color = '#00ffff';
+
+                payload = ''; // Clear after sending
+                document.getElementById('filePicker').value = '';
             }
-        }
-    });
+        });
     </script>
 </body>

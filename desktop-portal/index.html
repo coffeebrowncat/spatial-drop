@@ -5,19 +5,11 @@
     <style>
         body {
             margin: 0;
-            /* The magic frosted glass effect */
             background: rgba(255, 255, 255, 0.1);
-            /* light white, very transparent */
             backdrop-filter: blur(20px);
-            /* the "frosted" blur */
             -webkit-backdrop-filter: blur(20px);
-            /* safari/electron support */
-
             border: 1px solid rgba(255, 255, 255, 0.2);
-            /* faint border */
             border-radius: 50%;
-            /* circular */
-
             display: flex;
             justify-content: center;
             align-items: center;
@@ -25,25 +17,106 @@
             font-family: sans-serif;
             height: 100vh;
             width: 100vw;
-
-            /* prevents the mouse from clicking through it accidentally */
-            pointer-events: auto;
+            -webkit-app-region: drag;
+            /* Lets you drag the circle around */
+            overflow: hidden;
+            transition: background 0.3s ease;
         }
 
         @keyframes shake {
-    0%, 100% { transform: rotate(0deg); }
-    25% { transform: rotate(-5deg); }
-    75% { transform: rotate(5deg); }
-}
 
-.shaking {
-    animation: shake 0.5s ease-in-out infinite;
-}
+            0%,
+            100% {
+                transform: rotate(0deg);
+            }
+
+            25% {
+                transform: rotate(-5deg);
+            }
+
+            75% {
+                transform: rotate(5deg);
+            }
+        }
+
+        .receiving {
+            animation: shake 0.3s ease-in-out infinite;
+            background: rgba(0, 255, 100, 0.3);
+            /* Flashes green when catching */
+        }
     </style>
 </head>
 
-<body>
-    <div>PORTAL</div>
+<body id="portal">
+    <div id="status">WAITING</div>
+
+    <script>
+        // We can require native Node tools right in the HTML because of Electron!
+        const fs = require('fs');
+        const path = require('path');
+        const os = require('os');
+        const { shell } = require('electron'); // This lets us control Windows/Mac native windows
+
+        const ws = new WebSocket('ws://localhost:3000');
+        const portal = document.getElementById('portal');
+        const statusText = document.getElementById('status');
+
+        ws.onopen = () => {
+            console.log('Catcher Mitt is wired and ready.');
+            statusText.innerText = "READY";
+            ws.send(JSON.stringify({ type: 'join', pin: 'magic-room' }));
+        };
+
+        ws.onmessage = async (event) => {
+            try {
+                // Attempt to parse the message
+                const rawData = event.data;
+                let parsed;
+
+                // Handle both JSON and potential raw string fallback
+                try {
+                    parsed = JSON.parse(rawData);
+                } catch (e) {
+                    // If it's not JSON, it might be a raw image string
+                    parsed = { type: 'file_data', data: rawData };
+                }
+
+                // Only act if the type is explicitly file_data
+                if (parsed.type === 'file_data' && parsed.data) {
+                    console.log('Valid file received!');
+
+                    // FORCE conversion to string to prevent the .replace() crash
+                    const imageData = typeof parsed.data === 'string' ? parsed.data : JSON.stringify(parsed.data);
+
+                    // Now it is guaranteed to be a string, and .replace() will work
+                    const base64Data = imageData.replace(/^data:image\/\w+;base64,/, "");
+                    statusText.innerText = "CAUGHT!";
+
+                    const buffer = Buffer.from(base64Data, 'base64');
+                    const filePath = path.join(os.homedir(), 'Downloads', `Drop_${Date.now()}.png`);
+
+                    fs.writeFile(filePath, buffer, (err) => {
+                        if (err) console.error("Write error:", err);
+                        else shell.openPath(filePath);
+
+                        setTimeout(() => {
+                            portal.classList.remove('receiving');
+                            statusText.innerText = "READY";
+                        }, 1000);
+                    });
+                } else {
+                    console.log("Received non-file message, ignoring...");
+                }
+            } catch (err) {
+                console.error("Processing error:", err);
+            }
+        };
+
+        ws.onclose = () => {
+            statusText.innerText = "OFFLINE";
+            portal.style.background = "rgba(255, 0, 0, 0.3)";
+        };
+    </script>
 </body>
 
 </html>

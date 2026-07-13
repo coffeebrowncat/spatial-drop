@@ -5,6 +5,18 @@ const { setServers } = require("node:dns/promises");
 // this tricks your strict corporate wifi into letting us talk to the external mongodb database
 setServers(["8.8.8.8", "1.1.1.1"]);
 
+const express = require('express');
+const path = require('path');
+const app = express();
+const server = require('http').createServer(app);
+
+// Tell Express to serve files from the current folder
+app.use(express.static(path.join(__dirname, '.')));
+
+// Explicitly send index.html for the root route
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
 // tools
 // load up the dotenv tool, which reads your hidden .env file so we dont leak passwords
 require('dotenv').config();
@@ -16,20 +28,20 @@ const { Client } = require('pg');
 // db connection
 // tell mongoose to try and connect using the secret link from your .env file
 mongoose.connect(process.env.MONGO_URI)
-  .then(() => {
-    // if it works, print this massive success message in the terminal so we know we are safe
-    console.log('[stealth] mongo analytics firehose: ONLINE');
-  })
-  .catch((err) => {
-    // if it fails, print the error so we know exactly why it broke instead of silently dying
-    console.error('mongo connection failed:', err);
-  });
+    .then(() => {
+        // if it works, print this massive success message in the terminal so we know we are safe
+        console.log('[stealth] mongo analytics firehose: ONLINE');
+    })
+    .catch((err) => {
+        // if it fails, print the error so we know exactly why it broke instead of silently dying
+        console.error('mongo connection failed:', err);
+    });
 
 // switchboard setup
 // grab the ws tool, which is the engine that handles real-time websocket connections
 const WebSocket = require('ws');
 // create the actual server and tell it to listen for connections on port 3000
-const wss = new WebSocket.Server({ port: 3000 });
+const wss = new WebSocket.Server({ server });
 // create an empty 'map' (basically a super-fast javascript dictionary) to remember who is in what room right now
 const activeRooms = new Map();
 
@@ -51,16 +63,16 @@ wss.on('connection', (ws) => {
             if (data.type === 'join') {
                 // grab the 6-digit pin they sent us
                 const pin = data.pin;
-                
+
                 // if this pin doesnt exist in our activeRooms map yet...
                 if (!activeRooms.has(pin)) {
                     // create a new, empty room for this specific pin
                     activeRooms.set(pin, new Set());
                 }
-                
+
                 // grab the specific room for this pin so we can look inside it
                 const room = activeRooms.get(pin);
-                
+
                 // if there are already 2 people in the room, kick this new person out
                 if (room.size >= 2) {
                     // send an error message back to the user
@@ -75,25 +87,25 @@ wss.on('connection', (ws) => {
                 ws.send(JSON.stringify({ status: 'connected', pin: pin }));
                 // log it to the terminal so we can see the magic happening
                 console.log(`someone joined room: ${pin}`);
+                return;
             }
 
             // --- 2. PASSING THE TEXT CHUNKS ---
             // if the message is a piece of a text file OR the metadata (like the file name/size)
-            if (data.type === 'file_chunk' || data.type === 'metadata') {
-                // if the user isnt in a room yet, ignore them completely
+            if (data.type === 'file_data') {
                 if (!ws.roomId) return;
-                
-                // find the room the user is sitting in
+
                 const room = activeRooms.get(ws.roomId);
-                
-                // look at every single person currently inside that room
+
+                // Only forward the original, stringified JSON message
                 room.forEach(client => {
-                    // if the person we are looking at is NOT the sender, AND their connection is still open...
                     if (client !== ws && client.readyState === WebSocket.OPEN) {
-                        // blindly throw the exact message over to them
                         client.send(message);
+                        console.log("SUCCESS: Forwarded file data to laptop.");
                     }
                 });
+            } else {
+                console.log("Server ignored message type:", data.type);
             }
 
             // --- 3. THE DONE SIGNAL (STEALTH LOGGING) ---
@@ -101,10 +113,10 @@ wss.on('connection', (ws) => {
             if (data.type === 'done') {
                 // if they arent in a room, ignore them
                 if (!ws.roomId) return;
-                
+
                 // find their room
                 const room = activeRooms.get(ws.roomId);
-                
+
                 // look at everyone in the room
                 room.forEach(client => {
                     // if it's the other person...
@@ -113,23 +125,23 @@ wss.on('connection', (ws) => {
                         client.send(message);
                     }
                 });
-                
+
                 // log to the terminal that we are about to hit the databases secretly
                 console.log(`[stealth log] transfer complete in room ${ws.roomId}. logging to database...`);
                 // (we will put your actual mongo/postgres logging code here later)
             }
 
-        // --- THE CRASH SAVER (MASSIVE FILES) ---
+            // --- THE CRASH SAVER (MASSIVE FILES) ---
         } catch (error) {
             // if JSON.parse fails, it means the message was RAW BINARY DATA (like a massive 4k video chunk)
             // if we didn't have this catch block, a 50mb video would literally kill the node server.
             // instead of crashing, we catch the error here and blindly pass the raw data across the pipe.
-            
+
             // if the user is in a room...
             if (ws.roomId) {
                 // find their room
                 const room = activeRooms.get(ws.roomId);
-                
+
                 // look at everyone in the room
                 room.forEach(client => {
                     // if it's the other person...
@@ -151,7 +163,7 @@ wss.on('connection', (ws) => {
             const room = activeRooms.get(ws.roomId);
             // remove them from the room
             room.delete(ws);
-            
+
             // if the room is totally empty now...
             if (room.size === 0) {
                 // delete the room from the server memory so we dont waste server ram
@@ -164,4 +176,6 @@ wss.on('connection', (ws) => {
 });
 
 // print this when the file first runs so we know the code actually executed
-console.log("switchboard operator awake and listening on port 3000...");
+server.listen(3000, '0.0.0.0', () => {
+    console.log("switchboard operator awake and listening on port 3000...");
+});
