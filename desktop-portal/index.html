@@ -5,116 +5,60 @@
     <style>
         body {
             margin: 0;
-            background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            border-radius: 50%;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            color: rgba(255, 255, 255, 0.8);
-            font-family: sans-serif;
             height: 100vh;
             width: 100vw;
-            -webkit-app-region: drag;
-            /* Lets you drag the circle around */
-            overflow: hidden;
-            transition: background 0.3s ease;
+            background: transparent;
+            transition: all 0.2s ease;
+        }
+
+        /* The "Buzz" Effect */
+        .buzzing {
+            box-shadow: inset 0 0 80px 20px rgba(0, 255, 255, 0.7);
+            animation: shake 0.1s linear infinite;
         }
 
         @keyframes shake {
+            0% {
+                transform: translate(2px, 1px) rotate(0deg);
+            }
 
-            0%,
+            50% {
+                transform: translate(-2px, -1px) rotate(1deg);
+            }
+
             100% {
-                transform: rotate(0deg);
+                transform: translate(2px, 1px) rotate(0deg);
             }
-
-            25% {
-                transform: rotate(-5deg);
-            }
-
-            75% {
-                transform: rotate(5deg);
-            }
-        }
-
-        .receiving {
-            animation: shake 0.3s ease-in-out infinite;
-            background: rgba(0, 255, 100, 0.3);
-            /* Flashes green when catching */
         }
     </style>
 </head>
 
-<body id="portal">
-    <div id="status">WAITING</div>
-
+<body id="screen-edge">
     <script>
-        // We can require native Node tools right in the HTML because of Electron!
-        const fs = require('fs');
-        const path = require('path');
-        const os = require('os');
-        const { shell } = require('electron'); // This lets us control Windows/Mac native windows
-
+        const { shell } = require('electron');
         const ws = new WebSocket('ws://localhost:3000');
-        const portal = document.getElementById('portal');
-        const statusText = document.getElementById('status');
+        const edge = document.getElementById('screen-edge');
 
-        ws.onopen = () => {
-            console.log('Catcher Mitt is wired and ready.');
-            statusText.innerText = "READY";
-            ws.send(JSON.stringify({ type: 'join', pin: 'magic-room' }));
-        };
+        ws.onopen = () => ws.send(JSON.stringify({ type: 'join', pin: 'magic-room' }));
 
-        ws.onmessage = async (event) => {
-            try {
-                // Attempt to parse the message
-                const rawData = event.data;
-                let parsed;
+        ws.onmessage = (event) => {
+            const parsed = JSON.parse(event.data);
 
-                // Handle both JSON and potential raw string fallback
-                try {
-                    parsed = JSON.parse(rawData);
-                } catch (e) {
-                    // If it's not JSON, it might be a raw image string
-                    parsed = { type: 'file_data', data: rawData };
-                }
+            if (parsed.type === 'file_caught') {
+                const edge = document.getElementById('screen-edge');
 
-                // Only act if the type is explicitly file_data
-                if (parsed.type === 'file_data' && parsed.data) {
-                    console.log('Valid file received!');
+                // 1. Trigger the Buzz
+                edge.classList.add('buzzing');
 
-                    // FORCE conversion to string to prevent the .replace() crash
-                    const imageData = typeof parsed.data === 'string' ? parsed.data : JSON.stringify(parsed.data);
+                // 2. Play a subtle system beep (or replace with new Audio('pop.mp3').play())
+                new Audio('data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAAABmYWN0BAAAAAAAAABkYXRhAAAAAA==').play();
 
-                    // Now it is guaranteed to be a string, and .replace() will work
-                    const base64Data = imageData.replace(/^data:image\/\w+;base64,/, "");
-                    statusText.innerText = "CAUGHT!";
+                // 3. Open the file
+                shell.openPath(parsed.path);
 
-                    const buffer = Buffer.from(base64Data, 'base64');
-                    const filePath = path.join(os.homedir(), 'Downloads', `Drop_${Date.now()}.png`);
-
-                    fs.writeFile(filePath, buffer, (err) => {
-                        if (err) console.error("Write error:", err);
-                        else shell.openPath(filePath);
-
-                        setTimeout(() => {
-                            portal.classList.remove('receiving');
-                            statusText.innerText = "READY";
-                        }, 1000);
-                    });
-                } else {
-                    console.log("Received non-file message, ignoring...");
-                }
-            } catch (err) {
-                console.error("Processing error:", err);
+                // 4. Reset after 0.5 seconds
+                setTimeout(() => edge.classList.remove('buzzing'), 500);
             }
-        };
-
-        ws.onclose = () => {
-            statusText.innerText = "OFFLINE";
-            portal.style.background = "rgba(255, 0, 0, 0.3)";
         };
     </script>
 </body>

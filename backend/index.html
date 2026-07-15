@@ -19,45 +19,59 @@
             console.log('we are in.');
             document.getElementById('status').innerText = 'connected. ready for drop.';
             document.getElementById('status').style.color = 'green';
-            // Join the room using the same ID as the desktop app
             ws.send(JSON.stringify({ type: 'join', pin: 'magic-room' }));
         };
 
-        let payload = "";
+        // We no longer need the massive string payload. Just remember the file.
+        let selectedFile = null;
 
         document.getElementById('filePicker').addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            const reader = new FileReader();
-
-            reader.onload = (event) => {
-                payload = event.target.result;
-                document.getElementById('status').innerText = 'photo loaded. ready to flick.';
+            selectedFile = e.target.files[0];
+            if (selectedFile) {
+                document.getElementById('status').innerText = 'file loaded. ready to flick.';
                 document.getElementById('status').style.color = 'yellow';
-            };
-            reader.readAsDataURL(file);
+            }
         });
 
         let startY = 0;
         document.body.addEventListener('touchstart', (e) => startY = e.touches[0].clientY);
-        document.body.addEventListener('touchend', (e) => {
+        
+        // --- THE NEW UNLIMITED CAPACITY FETCH BLOCK ---
+        document.body.addEventListener('touchend', async (e) => {
             const endY = e.changedTouches[0].clientY;
             const distance = startY - endY;
 
-            if (distance > 100 && ws.readyState === WebSocket.OPEN && payload !== '') {
-                // ONLY ONE SEND COMMAND: Structured and reliable
-                const message = JSON.stringify({
-                    type: 'file_data',
-                    data: payload,
-                    timestamp: Date.now()
-                });
+            // If it's a swipe UP (>100px) and we have a file selected
+            if (distance > 100 && selectedFile) {
+                document.getElementById('status').innerText = 'dropping massive payload...';
+                document.getElementById('status').style.color = 'orange';
 
-                ws.send(message);
+                // Pack the raw binary file into standard Form Data (like a real production app)
+                const formData = new FormData();
+                formData.append('file', selectedFile);
+                formData.append('roomId', 'magic-room');
 
-                console.log("Transmission sent to server...");
-                document.getElementById('status').innerText = 'photo dropped.';
-                document.getElementById('status').style.color = '#00ffff';
+                try {
+                    // Stream it over HTTP. 
+                    // Note: We DO NOT set 'Content-Type' here. The browser automatically calculates the complex multi-part boundaries for us.
+                    const response = await fetch(`http://${laptopip}:3000/upload`, {
+                        method: 'POST',
+                        body: formData 
+                    });
 
-                payload = ''; // Clear after sending
+                    if (response.ok) {
+                        console.log("Transmission safely delivered to server via HTTP stream.");
+                        document.getElementById('status').innerText = 'file dropped.';
+                        document.getElementById('status').style.color = '#00ffff';
+                    }
+                } catch (err) {
+                    console.error("HTTP Upload Crash:", err);
+                    document.getElementById('status').innerText = 'drop failed.';
+                    document.getElementById('status').style.color = 'red';
+                }
+
+                // Clear the chamber for the next shot
+                selectedFile = null; 
                 document.getElementById('filePicker').value = '';
             }
         });
