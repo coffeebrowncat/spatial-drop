@@ -100,7 +100,7 @@ wss.on('connection', (ws) => {
                 // Only forward the original, stringified JSON message
                 room.forEach(client => {
                     if (client !== ws && client.readyState === WebSocket.OPEN) {
-                        client.send(message);
+                        client.send(message.toString());
                         console.log("SUCCESS: Forwarded file data to laptop.");
                     }
                 });
@@ -122,7 +122,7 @@ wss.on('connection', (ws) => {
                     // if it's the other person...
                     if (client !== ws && client.readyState === WebSocket.OPEN) {
                         // tell them the file is done so they can save it to their hard drive
-                        client.send(message);
+                        client.send(message.toString());
                     }
                 });
 
@@ -131,7 +131,7 @@ wss.on('connection', (ws) => {
                 // (we will put your actual mongo/postgres logging code here later)
             }
 
-            // --- THE CRASH SAVER (MASSIVE FILES) ---
+            // --- THE CRASH SAVER (MASSIVE FILES) --- ///
         } catch (error) {
             // if JSON.parse fails, it means the message was RAW BINARY DATA (like a massive 4k video chunk)
             // if we didn't have this catch block, a 50mb video would literally kill the node server.
@@ -147,7 +147,7 @@ wss.on('connection', (ws) => {
                     // if it's the other person...
                     if (client !== ws && client.readyState === WebSocket.OPEN) {
                         // blindly throw the massive chunk of raw video data right at them
-                        client.send(message);
+                        client.send(message.toString());
                     }
                 });
             }
