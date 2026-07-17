@@ -4,7 +4,7 @@
   "description": "",
   "main": "main.js",
   "scripts": {
-  "start": "electron ."
+    "start": "electron ."
   },
   "keywords": [],
   "author": "",
@@ -12,5 +12,8 @@
   "type": "commonjs",
   "devDependencies": {
     "electron": "^43.1.0"
+  },
+  "dependencies": {
+    "electron-reload": "^2.0.0-alpha.1"
   }
 }

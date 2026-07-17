@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <style>
+        /* 1. Base Setup: Completely invisible */
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            background: transparent;
+        }
+
+        /* 2. The Canvas: This holds the shadow */
+        #overlay {
+            width: 100%;
+            height: 100%;
+            box-sizing: border-box;
+            border: 1px solid transparent;
+            transition: all 1s ease-out;
+        }
+
+        /* 3. The Hit: Forces OS to render the cyan glow */
+        .buzzing {
+            /* You NEED this faint background, or the OS hides the shadow */
+            background: rgba(0, 0, 0, 0.001) !important;
+            box-shadow: inset 0 0 50px 10px rgba(145, 120, 18, 0.301) !important;
+            animation: haptic-shake 0.1s linear infinite;
+        }
+
+        /* 4. The Fake Vibration: Moves the pixels violently */
+        @keyframes haptic-shake {
+            0% {
+                transform: translate(3px, 2px);
+            }
+
+            25% {
+                transform: translate(-3px, -2px);
+            }
+
+            50% {
+                transform: translate(3px, -1px);
+            }
+
+            75% {
+                transform: translate(-2px, 3px);
+            }
+
+            100% {
+                transform: translate(1px, -3px);
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div id="overlay"></div>
+
+    <script>
+        const { shell } = require('electron');
+        const ws = new WebSocket('ws://localhost:3000');
+
+        ws.onopen = () => {
+            console.log("Desktop ghost window connected.");
+            ws.send(JSON.stringify({ type: 'join', pin: 'magic-room' }));
+        };
+
+        // --- THE HAPTIC FUNCTION (Extracting it so we can reuse it) ---
+        function triggerHapticFeedback(filePath) {
+            const overlay = document.getElementById('overlay');
+
+            // 1. Trigger Visual
+            overlay.classList.add('buzzing');
+
+            // --- 2. TRIGGER RAW SUB-BASS VIBRATION ---
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+
+            oscillator.type = 'sine'; // A pure, smooth wave
+            oscillator.frequency.setValueAtTime(30, audioCtx.currentTime); // 45Hz is deep sub-bass (felt, not heard)
+
+            // Start at full volume, then violently fade out over 0.25 seconds to fake a physical impact
+            gainNode.gain.setValueAtTime(1.5, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.25);
+
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.25);
+
+            // 3. Open File (If one was passed)
+            if (filePath) {
+                shell.openPath(filePath);
+            }
+
+            // 4. Cool Down
+            setTimeout(() => {
+                overlay.classList.remove('buzzing');
+            }, 400); // Tweak this number to change how long the glow stays
+        }
+
+        // --- REAL TRIGGER: From the Phone ---
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.type === 'file_caught') {
+                triggerHapticFeedback(data.path);
+            }
+        };
+
+        // --- DEV TRIGGER: Press Spacebar to test ---
+        document.addEventListener('keydown', (event) => {
+            // Check if DevTools is open OR if we just want a global shortcut
+            if (event.code === 'Space') {
+                console.log("Dev trigger fired!");
+                // Notice we pass 'null' for the file path so it doesn't try to open anything
+                triggerHapticFeedback(null);
+            }
+        });
+    </script>
+</body>
+
+</html>
