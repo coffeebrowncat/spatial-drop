@@ -3,7 +3,9 @@
 
 <head>
     <style>
-        /* 1. Base Setup: Completely invisible */
+        /* this whole window is invisible on purpose - it just sits on
+           top of your entire screen, completely see-through, until we
+           need it to flash a glow */
         html,
         body {
             margin: 0;
@@ -14,24 +16,27 @@
             background: transparent;
         }
 
-        /* 2. The Canvas: This holds the shadow */
+        /* the "canvas" that the glow effect actually gets painted onto */
         #overlay {
             width: 100%;
             height: 100%;
             box-sizing: border-box;
             border: 1px solid transparent;
-            transition: all 1s ease-out;
+            transition: all 1s ease-out; /* how slowly the glow fades back to nothing */
         }
 
-        /* 3. The Hit: Forces OS to render the cyan glow */
+        /* this class gets added/removed by javascript to turn the glow on/off */
         .buzzing {
-            /* You NEED this faint background, or the OS hides the shadow */
+            /* you NEED some tiny bit of background here or some computers
+               just refuse to render the glow at all, it's a weird quirk */
             background: rgba(0, 0, 0, 0.001) !important;
             box-shadow: inset 0 0 50px 10px rgba(145, 120, 18, 0.301) !important;
             animation: haptic-shake 0.1s linear infinite;
         }
 
-        /* 4. The Fake Vibration: Moves the pixels violently */
+        /* this is what makes the screen look like it's "shaking" -
+           it just nudges everything a couple pixels in different
+           directions super fast, over and over */
         @keyframes haptic-shake {
             0% {
                 transform: translate(3px, 2px);
@@ -57,68 +62,120 @@
 </head>
 
 <body>
+    <!-- this empty div is literally the entire visible page, it's just
+         a blank rectangle that covers your whole screen -->
     <div id="overlay"></div>
 
     <script>
+        // lets us use real desktop features (like opening files) even though
+        // this is technically just a webpage
         const { shell } = require('electron');
+
+        // connect to our own server, since the desktop app runs on the
+        // same computer the server lives on, we can just say "localhost"
         const ws = new WebSocket('ws://localhost:3000');
 
+        // ONE shared audio context, made once, reused forever.
+        // (we used to make a brand new one every single buzz, which was
+        // wasteful and could eventually straight up stop working)
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
         ws.onopen = () => {
-            console.log("Desktop ghost window connected.");
+            console.log("desktop ghost window connected.");
             ws.send(JSON.stringify({ type: 'join', pin: 'magic-room' }));
         };
 
-        // --- THE HAPTIC FUNCTION (Extracting it so we can reuse it) ---
-        function triggerHapticFeedback(filePath) {
+        // --- THE HAPTIC FUNCTION ---
+        // this is the thing that makes the screen glow, shake, and go "thump"
+        // "paths" can be: null (just testing), one path, or a whole list of paths
+        function triggerHapticFeedback(paths) {
             const overlay = document.getElementById('overlay');
 
-            // 1. Trigger Visual
+            // 1. turn the glow + shake on
             overlay.classList.add('buzzing');
 
-            // --- 2. TRIGGER RAW SUB-BASS VIBRATION ---
-            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            const oscillator = audioCtx.createOscillator();
-            const gainNode = audioCtx.createGain();
+            // 2. make a deep "thump" sound using raw sound waves instead of
+            //    an actual sound file - basically faking a physical impact
+            const oscillator = audioCtx.createOscillator(); // the thing that makes the tone
+            const gainNode = audioCtx.createGain();          // the thing that controls volume
 
-            oscillator.type = 'sine'; // A pure, smooth wave
-            oscillator.frequency.setValueAtTime(30, audioCtx.currentTime); // 45Hz is deep sub-bass (felt, not heard)
+            oscillator.type = 'sine'; // smooth, round wave, not harsh/buzzy
+            oscillator.frequency.setValueAtTime(30, audioCtx.currentTime); // super low = felt more than heard
 
-            // Start at full volume, then violently fade out over 0.25 seconds to fake a physical impact
+            // start LOUD, then rapidly fade to basically silent - that's
+            // what makes it sound like a quick physical "hit" instead of a beep
             gainNode.gain.setValueAtTime(1.5, audioCtx.currentTime);
             gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.25);
 
+            // wire the tone generator into the volume control, and the
+            // volume control into your actual speakers
             oscillator.connect(gainNode);
             gainNode.connect(audioCtx.destination);
 
             oscillator.start();
-            oscillator.stop(audioCtx.currentTime + 0.25);
+            oscillator.stop(audioCtx.currentTime + 0.25); // auto-stops itself after a quarter second
 
-            // 3. Open File (If one was passed)
-            if (filePath) {
-                shell.openPath(filePath);
+            // 3. SMART OPEN — one file vs a whole batch behave differently
+            if (paths && paths.length === 1) {
+                // just one file? pop it open directly, easy
+                shell.openPath(paths[0]);
+            } else if (paths && paths.length > 1) {
+                // a bunch of files? don't open 10 windows, just open the
+                // folder they're sitting in so you can see them all at once
+                shell.showItemInFolder(paths[0]);
             }
 
-            // 4. Cool Down
+            // 4. turn the glow back off after a short cooldown
+            //    (heads up: the CSS transition above takes a full 1s to
+            //    actually finish fading visually, even though we remove
+            //    the class at 400ms - so the real glow lasts closer to 1.4s)
             setTimeout(() => {
                 overlay.classList.remove('buzzing');
-            }, 400); // Tweak this number to change how long the glow stays
+            }, 400);
         }
 
-        // --- REAL TRIGGER: From the Phone ---
+        // --- REAL TRIGGER: stuff coming from the phone ---
         ws.onmessage = (event) => {
             const data = JSON.parse(event.data);
+
+            // the phone just sent files and is asking "hey, want these?"
+            if (data.type === 'incoming_files') {
+                // NEW: if the server already trusts this pairing (you said
+                // yes once already this session), skip the popup entirely
+                // and just silently accept - this is the "seamless" part
+                if (data.trusted) {
+                    console.log("already trusted this pairing, skipping the popup.");
+                    ws.send(JSON.stringify({ type: 'accept_transfer', transferId: data.transferId }));
+                    return;
+                }
+
+                // first time seeing this pairing this session, so actually ask
+                const label = data.count > 1 ? `${data.count} files` : 'a file';
+                const accepted = confirm(`accept ${label} from phone?\n\n${data.fileNames.join('\n')}`);
+
+                ws.send(JSON.stringify({
+                    type: accepted ? 'accept_transfer' : 'decline_transfer',
+                    transferId: data.transferId
+                }));
+                return;
+            }
+
+            // the server already moved the files to downloads for real,
+            // now go ahead and do the glow/shake/thump/open
             if (data.type === 'file_caught') {
-                triggerHapticFeedback(data.path);
+                triggerHapticFeedback(data.paths);
             }
         };
 
-        // --- DEV TRIGGER: Press Spacebar to test ---
+        // --- DEV TRIGGER: press spacebar to test the buzz without sending anything real ---
+        // heads up: because this whole window is "click-through" (mouse
+        // clicks pass right past it to your real desktop), this window
+        // probably won't actually have "focus", so this might just never
+        // fire. the shortcut below in main.js is the reliable way to test.
         document.addEventListener('keydown', (event) => {
-            // Check if DevTools is open OR if we just want a global shortcut
             if (event.code === 'Space') {
-                console.log("Dev trigger fired!");
-                // Notice we pass 'null' for the file path so it doesn't try to open anything
-                triggerHapticFeedback(null);
+                console.log("dev trigger fired!");
+                triggerHapticFeedback(null); // null = don't try to open anything
             }
         });
     </script>

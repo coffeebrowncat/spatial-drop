@@ -1,77 +1,120 @@
 <body
     style="font-family: sans-serif; text-align: center; padding: 50px; min-height: 100vh; margin: 0; background-color: #111; color: white; overflow-x: hidden;">
 
+    <!-- this is just the plain visible page stuff, nothing fancy -->
     <h1>spatial drop</h1>
     <p>status: <span id="status" style="color: red;">disconnected</span></p>
 
     <div style="margin-top: 30px; padding: 20px; background: #222; border-radius: 10px; display: inline-block;">
-        <p style="margin: 0 0 10px 0; color: #888;">1. pick a photo</p>
-        <input type="file" id="filePicker" accept="image/*" style="color: white;">
+        <p style="margin: 0 0 10px 0; color: #888;">1. pick photos</p>
+        <!-- "multiple" is the one word that lets you select more than 1 file at a time -->
+        <input type="file" id="filePicker" accept="image/*" multiple style="color: white;">
     </div>
 
     <p style="margin-top: 50px; color: #555; font-size: 1.2rem;">2. swipe UP anywhere to drop</p>
 
     <script>
+        // grab whatever address is in the browser bar right now (your laptop's ip)
+        // so we know where to actually connect to
         const laptopip = window.location.hostname;
+
+        // open up a live, always-on connection to the server (the walkie talkie)
         const ws = new WebSocket(`ws://${laptopip}:3000`);
 
+        // runs the moment the connection successfully opens
         ws.onopen = () => {
             console.log('we are in.');
             document.getElementById('status').innerText = 'connected. ready for drop.';
             document.getElementById('status').style.color = 'green';
+            // tell the server "put me in the room called magic-room"
             ws.send(JSON.stringify({ type: 'join', pin: 'magic-room' }));
         };
 
-        // We no longer need the massive string payload. Just remember the file.
-        let selectedFile = null;
+        // NEW: this listens for messages coming BACK from the server,
+        // so the phone can actually tell you what happened after you send something
+        ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
 
+                if (data.type === 'file_caught') {
+                    document.getElementById('status').innerText = 'they caught it!';
+                    document.getElementById('status').style.color = '#00ffff';
+                }
+                if (data.type === 'transfer_declined') {
+                    document.getElementById('status').innerText = 'declined.';
+                    document.getElementById('status').style.color = 'red';
+                }
+            } catch (e) {
+                // not something we understand, just ignore it, no biggie
+            }
+        };
+
+        // this is where we keep track of whatever photos you picked.
+        // it's an array (a list) now instead of just one single file
+        let selectedFiles = [];
+
+        // runs every time you pick file(s) using the file picker button
         document.getElementById('filePicker').addEventListener('change', (e) => {
-            selectedFile = e.target.files[0];
-            if (selectedFile) {
-                document.getElementById('status').innerText = 'file loaded. ready to flick.';
+            // Array.from() just turns the weird file-list browser object
+            // into a normal, easy-to-use javascript list
+            selectedFiles = Array.from(e.target.files);
+
+            if (selectedFiles.length > 0) {
+                document.getElementById('status').innerText = `${selectedFiles.length} file(s) loaded. ready to flick.`;
                 document.getElementById('status').style.color = 'yellow';
             }
         });
 
+        // keeps track of where your finger STARTED touching the screen
         let startY = 0;
         document.body.addEventListener('touchstart', (e) => startY = e.touches[0].clientY);
-        
-        // --- THE NEW UNLIMITED CAPACITY FETCH BLOCK ---
+
+        // --- THE ACTUAL "SEND IT" LOGIC ---
         document.body.addEventListener('touchend', async (e) => {
+            // where your finger ENDED UP when you lifted it
             const endY = e.changedTouches[0].clientY;
+
+            // how far up you swiped (bigger number = swiped further up)
             const distance = startY - endY;
 
-            // If it's a swipe UP (>100px) and we have a file selected
-            if (distance > 100 && selectedFile) {
+            // only fire if: you swiped up more than 100 pixels, AND you actually picked files
+            if (distance > 100 && selectedFiles.length > 0) {
                 document.getElementById('status').innerText = 'dropping massive payload...';
                 document.getElementById('status').style.color = 'orange';
 
-                // Pack the raw binary file into standard Form Data (like a real production app)
+                // FormData is just a "package" that can hold files + normal text
+                // together, in a format the server knows how to unpack
                 const formData = new FormData();
-                formData.append('file', selectedFile);
+
+                // stuff EVERY selected file into the package, one by one
+                // (still labeled "files" so it matches what the server expects)
+                selectedFiles.forEach(f => formData.append('files', f));
                 formData.append('roomId', 'magic-room');
 
                 try {
-                    // Stream it over HTTP. 
-                    // Note: We DO NOT set 'Content-Type' here. The browser automatically calculates the complex multi-part boundaries for us.
+                    // actually send the package over to the server.
+                    // we don't manually set "content-type" because the browser
+                    // is smart enough to figure that part out on its own
                     const response = await fetch(`http://${laptopip}:3000/upload`, {
                         method: 'POST',
-                        body: formData 
+                        body: formData
                     });
 
                     if (response.ok) {
-                        console.log("Transmission safely delivered to server via HTTP stream.");
-                        document.getElementById('status').innerText = 'file dropped.';
+                        console.log("transmission safely delivered to server via http stream.");
+                        // note: we don't say "file dropped" anymore, because it's
+                        // not actually saved yet - the laptop still has to accept it
+                        document.getElementById('status').innerText = 'sent — waiting for them to accept';
                         document.getElementById('status').style.color = '#00ffff';
                     }
                 } catch (err) {
-                    console.error("HTTP Upload Crash:", err);
+                    console.error("http upload crash:", err);
                     document.getElementById('status').innerText = 'drop failed.';
                     document.getElementById('status').style.color = 'red';
                 }
 
-                // Clear the chamber for the next shot
-                selectedFile = null; 
+                // reset everything so you're ready to send the next batch
+                selectedFiles = [];
                 document.getElementById('filePicker').value = '';
             }
         });
