@@ -3,8 +3,9 @@
   "version": "1.0.0",
   "description": "",
   "main": "main.js",
-  "scripts": {
-    "start": "electron ."
+    "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
   },
   "keywords": [],
   "author": "",
@@ -15,5 +16,20 @@
   },
   "dependencies": {
     "electron-reload": "^2.0.0-alpha.1"
+  },
+
+  "build": {
+    "appId": "com.yourname.spatialdrop",
+    "productName": "Spatial Drop",
+    "files": [
+      "**/*",
+      "!transfers.db"
+    ],
+    "mac": {
+      "target": "dmg"
+    },
+    "win": {
+      "target": "nsis"
+    }
   }
 }

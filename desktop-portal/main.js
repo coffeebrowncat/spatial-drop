@@ -1,10 +1,14 @@
 // grabbing the electron tools we need to build an actual desktop app
-const { app, BrowserWindow, screen, globalShortcut } = require('electron');
+const { app, BrowserWindow, screen, globalShortcut, ipcMain } = require('electron');
 
 // this makes the app automatically reload itself whenever you save a
 // code change, so you don't have to manually restart it every time
 // (only really useful while you're building it, not for the final version)
 require('electron-reload')(__dirname);
+
+// pull in the server file so the widget can start it itself, instead
+// of you needing a second terminal window open running it separately
+const { startServer } = require('../backend/server.js');
 
 // normally browsers block sounds from playing until you click something
 // first (annoying autoplay rules). this switch tells electron "nah, let
@@ -26,8 +30,8 @@ function createPortal() {
         skipTaskbar: true,     // doesn't show up in your taskbar/dock
         hasShadow: false,      // no drop shadow around the window edges
         webPreferences: {
-            nodeIntegration: true,      // lets desktop.html use node stuff like "require"
-            contextIsolation: false,    // needed for nodeIntegration to actually work
+            nodeIntegration: true,
+            contextIsolation: false,
             backgroundThrottling: false // stops electron from "slowing down" this window
                                          // when it thinks it's not being looked at -
                                          // important since this window is invisible 24/7
@@ -37,8 +41,11 @@ function createPortal() {
     // THIS is the magic line - it makes the window "click-through", meaning
     // your mouse clicks pass straight through it to whatever's actually
     // on your real desktop underneath. otherwise this invisible window
-    // would just block you from clicking anything ever
-    mainWindow.setIgnoreMouseEvents(true);
+    // would just block you from clicking anything ever.
+    // { forward: true } is what lets the page still receive mouse
+    // MOVEMENT info (so it can detect hovering) even while clicks and
+    // drags keep passing through everywhere else on the screen
+    mainWindow.setIgnoreMouseEvents(true, { forward: true });
 
     // keeps this window visible even if you switch desktops/spaces or
     // go fullscreen on something else - it should always be there
@@ -49,13 +56,28 @@ function createPortal() {
 
     // pops open a separate devtools window so you can see console logs
     // and errors while you're testing. REMEMBER: turn this off before
-    // you actually demo this to anyone, it looks messy
+    // you actually ship this to anyone, it looks messy
     mainWindow.webContents.openDevTools({ mode: 'detach' });
+
+    // NEW: desktop.html can't flip its own click-through setting by
+    // itself - only this main process can actually do that. so the
+    // page sends us a little message whenever the mouse enters/leaves
+    // the small drop zone in the corner, and we toggle it here on its
+    // behalf. this is what makes drag-and-drop possible on just that
+    // one small area, while the rest of the screen stays click-through
+    ipcMain.on('set-ignore-mouse-events', (event, ignore) => {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        win.setIgnoreMouseEvents(ignore, { forward: true });
+    });
 }
 
-// once electron has fully booted up, actually go build the window
-// (this line was missing before, which is why nothing was showing up!)
-app.whenReady().then(createPortal);
+// once electron has fully booted up: start the server FIRST, then build
+// the window. this order matters - the widget needs the server already
+// running so it can immediately ask it "hey what's the pin" on load
+app.whenReady().then(() => {
+    startServer();
+    createPortal();
+});
 
 // also once electron's ready, set up a global keyboard shortcut that
 // works system-wide, even if this window has no focus - since the

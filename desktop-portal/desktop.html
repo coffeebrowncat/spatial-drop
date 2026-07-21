@@ -22,7 +22,7 @@
             height: 100%;
             box-sizing: border-box;
             border: 1px solid transparent;
-            transition: all 1s ease-out; /* how slowly the glow fades back to nothing */
+            transition: all 0.15s ease-out; /* fast snap instead of a slow fade */
         }
 
         /* this class gets added/removed by javascript to turn the glow on/off */
@@ -58,6 +58,47 @@
                 transform: translate(1px, -3px);
             }
         }
+
+        /* this used to just be a text label showing the pin. now it's
+           also the ONLY spot on the entire invisible window that's
+           actually drop-able - the rest of the screen has to stay
+           fully click-through, or you couldn't use your desktop
+           normally while this app is running */
+        #dropZone {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 140px;
+            height: 90px;
+            background: rgba(0, 0, 0, 0.6);
+            color: #00ffff;
+            font-family: monospace;
+            font-size: 20px;
+            letter-spacing: 4px;
+            border-radius: 10px;
+            border: 1px solid rgba(0, 255, 255, 0.4);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            transition: background 0.15s ease-out, border-color 0.15s ease-out;
+        }
+
+        /* a visual cue so you can actually see when a drag is being
+           recognized - the zone lights up brighter the moment your
+           mouse enters it and it "arms" itself to accept a drop */
+        #dropZone.armed {
+            background: rgba(0, 255, 255, 0.15);
+            border-color: rgba(0, 255, 255, 0.9);
+        }
+
+        #dropZone span {
+            font-size: 10px;
+            letter-spacing: 1px;
+            color: #888;
+            margin-top: 4px;
+        }
     </style>
 </head>
 
@@ -66,12 +107,20 @@
          a blank rectangle that covers your whole screen -->
     <div id="overlay"></div>
 
+    <!-- shows the current pin AND doubles as the drag-and-drop target -->
+    <div id="dropZone">
+        ----
+        <span>drop here</span>
+    </div>
+
     <script>
         // lets us use real desktop features (like opening files) even though
         // this is technically just a webpage
-        const { shell } = require('electron');
+        const { shell, ipcRenderer } = require('electron');
+        const fs = require('fs');
+        const path = require('path');
 
-        // connect to our own server, since the desktop app runs on the
+        // connect to our own server, since the widget runs on the
         // same computer the server lives on, we can just say "localhost"
         const ws = new WebSocket('ws://localhost:3000');
 
@@ -80,9 +129,25 @@
         // wasteful and could eventually straight up stop working)
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
-        ws.onopen = () => {
+        // grab the current pin from our own server and show it in the
+        // drop zone, so you always know what to tell people
+        fetch('http://localhost:3000/api/pin')
+            .then(res => res.json())
+            .then(data => {
+                document.getElementById('dropZone').firstChild.textContent = data.pin;
+            })
+            .catch(err => console.error('couldnt fetch pin for the badge:', err));
+
+        // since the pin now changes every launch instead of always
+        // being "magic-room", we ask our own server what it currently
+        // is before joining - same trick as the badge above
+        ws.onopen = async () => {
             console.log("desktop ghost window connected.");
-            ws.send(JSON.stringify({ type: 'join', pin: 'magic-room' }));
+
+            const res = await fetch('http://localhost:3000/api/pin');
+            const { pin } = await res.json();
+
+            ws.send(JSON.stringify({ type: 'join', pin }));
         };
 
         // --- THE HAPTIC FUNCTION ---
@@ -115,20 +180,24 @@
             oscillator.start();
             oscillator.stop(audioCtx.currentTime + 0.25); // auto-stops itself after a quarter second
 
-            // 3. SMART OPEN — one file vs a whole batch behave differently
-            if (paths && paths.length === 1) {
-                // just one file? pop it open directly, easy
-                shell.openPath(paths[0]);
-            } else if (paths && paths.length > 1) {
-                // a bunch of files? don't open 10 windows, just open the
-                // folder they're sitting in so you can see them all at once
-                shell.showItemInFolder(paths[0]);
+            // 3. SMART OPEN — one file vs a whole batch behave differently.
+            //    wrapped in try/catch so if this ever throws, it can't
+            //    silently kill the glow cooldown below it - the glow
+            //    is now guaranteed to turn back off no matter what
+            try {
+                if (paths && paths.length === 1) {
+                    // just one file? pop it open directly, easy
+                    shell.openPath(paths[0]);
+                } else if (paths && paths.length > 1) {
+                    // a bunch of files? don't open 10 windows, just open the
+                    // folder they're sitting in so you can see them all at once
+                    shell.showItemInFolder(paths[0]);
+                }
+            } catch (err) {
+                console.error("couldn't open the file/folder:", err);
             }
 
             // 4. turn the glow back off after a short cooldown
-            //    (heads up: the CSS transition above takes a full 1s to
-            //    actually finish fading visually, even though we remove
-            //    the class at 400ms - so the real glow lasts closer to 1.4s)
             setTimeout(() => {
                 overlay.classList.remove('buzzing');
             }, 400);
@@ -140,7 +209,7 @@
 
             // the phone just sent files and is asking "hey, want these?"
             if (data.type === 'incoming_files') {
-                // NEW: if the server already trusts this pairing (you said
+                // if the server already trusts this pairing (you said
                 // yes once already this session), skip the popup entirely
                 // and just silently accept - this is the "seamless" part
                 if (data.trusted) {
@@ -163,6 +232,10 @@
             // the server already moved the files to downloads for real,
             // now go ahead and do the glow/shake/thump/open
             if (data.type === 'file_caught') {
+                // NEW: logs exactly what paths came back, so if this array
+                // is ever empty again, it's immediately obvious in the
+                // console instead of silently doing nothing
+                console.log('file_caught received, paths:', data.paths);
                 triggerHapticFeedback(data.paths);
             }
         };
@@ -171,12 +244,63 @@
         // heads up: because this whole window is "click-through" (mouse
         // clicks pass right past it to your real desktop), this window
         // probably won't actually have "focus", so this might just never
-        // fire. the shortcut below in main.js is the reliable way to test.
+        // fire. the global shortcut in main.js is the reliable way to test.
         document.addEventListener('keydown', (event) => {
             if (event.code === 'Space') {
                 console.log("dev trigger fired!");
                 triggerHapticFeedback(null); // null = don't try to open anything
             }
+        });
+
+        // --- LAPTOP-TO-LAPTOP: drag a file onto the drop zone to send it ---
+        // this ONLY works on the small dropZone box now, not the whole
+        // screen - the rest of the window has to stay click-through, or
+        // you couldn't use your actual desktop normally while this runs
+        const dropZone = document.getElementById('dropZone');
+
+        // the moment the mouse enters the drop zone, tell the main
+        // process to briefly stop being click-through, JUST for this
+        // window - this is what lets the OS actually deliver a drop
+        // event here instead of passing it straight through to your
+        // real desktop underneath
+        dropZone.addEventListener('mouseenter', () => {
+            ipcRenderer.send('set-ignore-mouse-events', false);
+            dropZone.classList.add('armed'); // visual "hey, I'm listening" cue
+        });
+
+        // and the moment it leaves, go straight back to fully
+        // click-through, so the rest of your screen keeps working
+        // completely normally, like the widget isn't even there
+        dropZone.addEventListener('mouseleave', () => {
+            ipcRenderer.send('set-ignore-mouse-events', true);
+            dropZone.classList.remove('armed');
+        });
+
+        dropZone.addEventListener('dragover', (e) => e.preventDefault());
+
+        dropZone.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('armed');
+            ipcRenderer.send('set-ignore-mouse-events', true); // go back to click-through right away
+
+            const file = e.dataTransfer.files[0];
+            if (!file || !file.path) return;
+
+            // reads the actual bytes straight off the hard drive
+            const buffer = fs.readFileSync(file.path);
+            const blob = new Blob([buffer]);
+            const filename = path.basename(file.path);
+
+            const formData = new FormData();
+            formData.append('files', blob, filename);
+
+            // grab the current pin so this upload lands in the right room
+            const pinRes = await fetch('http://localhost:3000/api/pin');
+            const { pin } = await pinRes.json();
+            formData.append('roomId', pin);
+
+            // NEW: updated to point to the correct /api/upload endpoint
+            await fetch('http://localhost:3000/api/upload', { method: 'POST', body: formData });
         });
     </script>
 </body>
