@@ -1,56 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Spatial Drop</title>
+    <link rel="manifest" href="manifest.json">
+</head>
 <body
     style="font-family: sans-serif; text-align: center; padding: 50px; min-height: 100vh; margin: 0; background-color: #111; color: white; overflow-x: hidden;">
 
-    <!-- this is just the plain visible page stuff, nothing fancy -->
     <h1>spatial drop</h1>
     <p>status: <span id="status" style="color: red;">disconnected</span></p>
 
     <div style="margin-top: 30px; padding: 20px; background: #222; border-radius: 10px; display: inline-block;">
-        <p style="margin: 0 0 10px 0; color: #888;">1. pick photos</p>
-        <!-- "multiple" is the one word that lets you select more than 1 file at a time -->
-        <input type="file" id="filePicker" accept="image/*" multiple style="color: white;">
+        <p style="margin: 0 0 10px 0; color: #888;">1. pick anything</p>
+        <input type="file" id="filePicker" multiple style="color: white;">
     </div>
 
     <p style="margin-top: 50px; color: #555; font-size: 1.2rem;">2. swipe UP anywhere to drop</p>
 
     <script>
-        // grab whatever address is in the browser bar right now (your laptop's ip)
-        // so we know where to actually connect to
-        const laptopip = window.location.hostname;
+        // NEW: registers the tiny service worker file, which is the
+        // other piece (besides the manifest above) that phones require
+        // before they'll let you "install" this as an app icon
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('service-worker.js').catch(err => {
+                console.log('service worker registration failed (not a big deal):', err);
+            });
+        }
 
-        // open up a live, always-on connection to the server (the walkie talkie)
-        const ws = new WebSocket(`ws://${laptopip}:3000`);
+        // paste the SAME firebase database url you put in server.js
+        const FIREBASE_DB_URL = "https://spatial-drop-default-rtdb.firebaseio.com";
 
-        // runs the moment the connection successfully opens
-        ws.onopen = () => {
-            console.log('we are in.');
-            document.getElementById('status').innerText = 'connected. ready for drop.';
-            document.getElementById('status').style.color = 'green';
-            // tell the server "put me in the room called magic-room"
-            ws.send(JSON.stringify({ type: 'join', pin: 'magic-room' }));
-        };
+        // ask for the pin shown on the laptop's widget badge
+        const roomPin = prompt("enter the pin shown on your laptop:");
 
-        // NEW: this listens for messages coming BACK from the server,
-        // so the phone can actually tell you what happened after you send something
-        ws.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
+        // we don't know the laptop's actual ip yet - we have to look
+        // it up in firebase first, using the pin above
+        let laptopip = null;
+        let ws;
 
-                if (data.type === 'file_caught') {
-                    document.getElementById('status').innerText = 'they caught it!';
-                    document.getElementById('status').style.color = '#00ffff';
-                }
-                if (data.type === 'transfer_declined') {
-                    document.getElementById('status').innerText = 'declined.';
-                    document.getElementById('status').style.color = 'red';
-                }
-            } catch (e) {
-                // not something we understand, just ignore it, no biggie
+        // asks firebase "hey, what ip is pin XXXX pointing at right now"
+        async function resolveLaptopIp() {
+            document.getElementById('status').innerText = 'looking up your laptop...';
+
+            const res = await fetch(`${FIREBASE_DB_URL}/pins/${roomPin}.json`);
+            const data = await res.json();
+
+            if (!data || !data.ip) {
+                document.getElementById('status').innerText = 'pin not found. check it and reload.';
+                document.getElementById('status').style.color = 'red';
+                return null;
             }
-        };
 
-        // this is where we keep track of whatever photos you picked.
-        // it's an array (a list) now instead of just one single file
+            return data.ip;
+        }
+
+        // this is everything that used to run immediately on page load -
+        // now it waits until we actually know the laptop's ip first
+        async function connect() {
+            laptopip = await resolveLaptopIp();
+            if (!laptopip) return; // lookup failed, bail out, error already shown above
+
+            // open up a live, always-on connection to the server (the walkie talkie)
+            ws = new WebSocket(`ws://${laptopip}:3000`);
+
+            // runs the moment the connection successfully opens
+            ws.onopen = () => {
+                console.log('we are in.');
+                document.getElementById('status').innerText = 'connected. ready for drop.';
+                document.getElementById('status').style.color = 'green';
+                ws.send(JSON.stringify({ type: 'join', pin: roomPin }));
+            };
+
+            // this listens for messages coming BACK from the server,
+            // so the phone can actually tell you what happened after you send something
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+
+                    if (data.type === 'file_caught') {
+                        document.getElementById('status').innerText = 'they caught it!';
+                        document.getElementById('status').style.color = '#00ffff';
+                    }
+                    if (data.type === 'transfer_declined') {
+                        document.getElementById('status').innerText = 'declined.';
+                        document.getElementById('status').style.color = 'red';
+                    }
+                } catch (e) {
+                    // not something we understand, just ignore it, no biggie
+                }
+            };
+        }
+
+        connect(); // actually kick the whole thing off, right now
+
+        // this is where we keep track of whatever files you picked.
+        // it's an array (a list) so it can hold more than just one
         let selectedFiles = [];
 
         // runs every time you pick file(s) using the file picker button
@@ -78,7 +124,8 @@
             const distance = startY - endY;
 
             // only fire if: you swiped up more than 100 pixels, AND you actually picked files
-            if (distance > 100 && selectedFiles.length > 0) {
+            // AND we actually managed to connect (laptopip isn't null)
+            if (distance > 100 && selectedFiles.length > 0 && laptopip) {
                 document.getElementById('status').innerText = 'dropping massive payload...';
                 document.getElementById('status').style.color = 'orange';
 
@@ -87,22 +134,22 @@
                 const formData = new FormData();
 
                 // stuff EVERY selected file into the package, one by one
-                // (still labeled "files" so it matches what the server expects)
                 selectedFiles.forEach(f => formData.append('files', f));
-                formData.append('roomId', 'magic-room');
+                // NEW: Make sure we send the roomId so the backend knows which session this belongs to!
+                formData.append('roomId', roomPin); 
 
                 try {
                     // actually send the package over to the server.
                     // we don't manually set "content-type" because the browser
                     // is smart enough to figure that part out on its own
-                    const response = await fetch(`http://${laptopip}:3000/upload`, {
+                    const response = await fetch(`http://${laptopip}:3000/api/upload`, {
                         method: 'POST',
                         body: formData
                     });
 
                     if (response.ok) {
                         console.log("transmission safely delivered to server via http stream.");
-                        // note: we don't say "file dropped" anymore, because it's
+                        // we don't say "file dropped" anymore, because it's
                         // not actually saved yet - the laptop still has to accept it
                         document.getElementById('status').innerText = 'sent — waiting for them to accept';
                         document.getElementById('status').style.color = '#00ffff';
@@ -120,3 +167,4 @@
         });
     </script>
 </body>
+</html>
