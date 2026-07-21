@@ -59,8 +59,24 @@ const uploadFiles = (req, res) => {
     res.status(201).json({ success: true, transferId });
 };
 
+// PUT /api/transfer/:id - (Placeholder for updating a transfer status)
+const updateTransfer = (req, res) => {
+    const transferId = req.params.id;
+    // Sending a 200 OK status
+    res.status(200).json({ success: true, message: `Transfer ${transferId} updated successfully.` });
+};
+
+// DELETE /api/transfer/:id - (Placeholder for canceling a transfer)
+const deleteTransfer = (req, res) => {
+    const transferId = req.params.id;
+    // Sending a 200 OK status
+    res.status(200).json({ success: true, message: `Transfer ${transferId} deleted permanently.` });
+};
+
 module.exports = {
     getPin,
     uploadFiles,
-    CONNECT_PIN
+    CONNECT_PIN,
+    updateTransfer,
+    deleteTransfer
 };

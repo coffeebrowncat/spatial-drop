@@ -3,7 +3,7 @@ const multer = require('multer');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
-const { getPin, uploadFiles } = require('../controllers/transferController');
+const { getPin, uploadFiles, updateTransfer, deleteTransfer } = require('../controllers/transferController');
 
 const router = express.Router();
 
@@ -25,5 +25,7 @@ const upload = multer({ storage: storage });
 
 router.get('/pin', getPin);
 router.post('/upload', upload.array('files', 10), uploadFiles);
+router.put('/transfer/:id', updateTransfer);
+router.delete('/transfer/:id', deleteTransfer);
 
 module.exports = router;
