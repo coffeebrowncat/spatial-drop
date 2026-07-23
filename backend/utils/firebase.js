@@ -7,7 +7,7 @@ const os = require('os');
 
 // paste your own firebase realtime database url here, the one that
 // looks like https://your-project-xxxxx-default-rtdb.firebaseio.com
-const FIREBASE_DB_URL = "https://spatial-drop-default-rtdb.firebaseio.com";
+const FIREBASE_DB_URL = process.env.FIREBASE_URL;
 
 // figures out this computer's actual local wifi ip address (like
 // 192.168.1.42) by asking the operating system directly, instead of

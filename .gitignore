@@ -1,8 +1,12 @@
 # Node dependencies
-**/node_modules/
+node_modules/
 
 # Environment files
 .env
+
+# Database files (Do not push local DB to GitHub!)
+transfers.db
+transfers.db-journal
 
 # Build artifacts
 dist/
