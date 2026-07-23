@@ -1,7 +1,7 @@
 // okay so this whole file is "the server" - think of it like the front desk guy
 // at a hotel. phones and laptops both call the front desk (this file) and the
 // front desk tells them where to go and passes messages between rooms.
-require('dotenv').config();
+require('dotenv').config({ path: '../.env' });
 
 // --- 1. FIREWALL BYPASS ---
 // some wifi networks (like school or office wifi) block random connections.
