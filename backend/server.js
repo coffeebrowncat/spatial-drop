@@ -1,7 +1,7 @@
 // okay so this whole file is "the server" - think of it like the front desk guy
 // at a hotel. phones and laptops both call the front desk (this file) and the
 // front desk tells them where to go and passes messages between rooms.
-require('dotenv').config(); 
+require('dotenv').config();
 
 // --- 1. FIREWALL BYPASS ---
 // some wifi networks (like school or office wifi) block random connections.
@@ -16,13 +16,13 @@ const express = require('express');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
-const https = require('https');
 
 // Import Modular Components
 const { connectMongo } = require('./config/db');
 const transferRoutes = require('./routes/transferRoutes');
 const { setupWebSockets } = require('./websockets/socket');
 const { CONNECT_PIN } = require('./controllers/transferController');
+const { getLocalIp, publishPinToFirebase } = require('./utils/firebase');
 
 // spin up the actual server app
 const app = express();
@@ -66,38 +66,6 @@ app.get('/', (req, res) => {
 
 // Initialize our WebSocket logic
 setupWebSockets(server);
-
-// --- 5. THE CONNECT PIN + FIREBASE MATCHMAKING ---
-const FIREBASE_DB_URL = "https://spatial-drop-default-rtdb.firebaseio.com";
-
-function getLocalIp() {
-    const interfaces = os.networkInterfaces();
-    for (const name in interfaces) {
-        for (const iface of interfaces[name]) {
-            if (iface.family === 'IPv4' && !iface.internal) {
-                return iface.address;
-            }
-        }
-    }
-    return null; 
-}
-
-function publishPinToFirebase(pin, ip) {
-    const payload = JSON.stringify({ ip, createdAt: Date.now() });
-    const url = `${FIREBASE_DB_URL}/pins/${pin}.json`;
-
-    const req = https.request(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' } }, (res) => {
-        if (res.statusCode === 200) {
-            console.log(`pin ${pin} published to firebase, pointing at ${ip}`);
-        } else {
-            console.error(`firebase publish failed with status ${res.statusCode}`);
-        }
-    });
-
-    req.on('error', (err) => console.error('couldnt reach firebase:', err));
-    req.write(payload);
-    req.end();
-}
 
 // --- 11. IGNITION ---
 // this used to just call server.listen() directly at the bottom of

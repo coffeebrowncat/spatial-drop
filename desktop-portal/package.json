@@ -11,9 +11,7 @@
   "author": "",
   "license": "ISC",
   "type": "commonjs",
-  "devDependencies": {
-    "electron": "^43.1.0"
-  },
+  "devDependencies": {},
   "dependencies": {
     "electron-reload": "^2.0.0-alpha.1"
   },

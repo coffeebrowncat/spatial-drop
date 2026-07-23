@@ -59,18 +59,51 @@ const uploadFiles = (req, res) => {
     res.status(201).json({ success: true, transferId });
 };
 
-// PUT /api/transfer/:id - (Placeholder for updating a transfer status)
+// PUT /api/transfer/:id
+// "updating" a pending transfer means giving it more time before it
+// auto-expires - handy if someone's still deciding whether to accept
+// and you don't want it to vanish out from under them at the 30s mark
 const updateTransfer = (req, res) => {
     const transferId = req.params.id;
-    // Sending a 200 OK status
-    res.status(200).json({ success: true, message: `Transfer ${transferId} updated successfully.` });
+    const t = pendingTransfers.get(transferId);
+
+    if (!t) {
+        return res.status(404).json({ error: 'transfer not found or already resolved' });
+    }
+
+    clearTimeout(t.timeout); // cancel the old countdown
+    t.timeout = setTimeout(() => cleanupTransfer(transferId), TRANSFER_TIMEOUT_MS); // start a fresh one
+
+    console.log(`[HTTP PUT] extended timeout for transfer ${transferId}`);
+    res.status(200).json({ success: true, message: `transfer ${transferId} timeout extended.` });
 };
 
-// DELETE /api/transfer/:id - (Placeholder for canceling a transfer)
+// DELETE /api/transfer/:id
+// actually cancels a pending transfer - wipes its temp files and tells
+// the room it got declined. this is the REST equivalent of clicking
+// "decline" on the popup, just triggered over HTTP instead of the
+// websocket, in case some other client ever needs to cancel this way
 const deleteTransfer = (req, res) => {
     const transferId = req.params.id;
-    // Sending a 200 OK status
-    res.status(200).json({ success: true, message: `Transfer ${transferId} deleted permanently.` });
+    const t = pendingTransfers.get(transferId);
+
+    if (!t) {
+        return res.status(404).json({ error: 'transfer not found or already resolved' });
+    }
+
+    const roomId = t.room;
+    cleanupTransfer(transferId); // wipes temp files, removes it from tracking
+
+    if (activeRooms.has(roomId)) {
+        activeRooms.get(roomId).forEach(client => {
+            if (client.readyState === WebSocket.OPEN) {
+                client.send(JSON.stringify({ type: 'transfer_declined', transferId }));
+            }
+        });
+    }
+
+    console.log(`[HTTP DELETE] canceled transfer ${transferId}`);
+    res.status(200).json({ success: true, message: `transfer ${transferId} canceled and cleaned up.` });
 };
 
 module.exports = {

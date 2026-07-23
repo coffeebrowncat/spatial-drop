@@ -1,11 +1,18 @@
 {
+  "name": "spatial-drop",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "desktop-portal"
+  ],
   "dependencies": {
     "better-sqlite3": "^12.11.1",
     "electron-builder": "^26.15.3"
   },
   "allowScripts": {
     "better-sqlite3@12.11.1": true,
-    "electron-winstaller@5.4.0": true
+    "electron-winstaller@5.4.0": true,
+    "lzma-native@8.0.6": true
   },
   "devDependencies": {
     "electron": "^43.1.1",

@@ -1,99 +1,87 @@
 // grabbing the electron tools we need to build an actual desktop app
-const { app, BrowserWindow, screen, globalShortcut, ipcMain } = require('electron');
+const { app, BrowserWindow, screen, globalShortcut } = require('electron');
 
-// this makes the app automatically reload itself whenever you save a
-// code change, so you don't have to manually restart it every time
-// (only really useful while you're building it, not for the final version)
 require('electron-reload')(__dirname);
 
-// pull in the server file so the widget can start it itself, instead
-// of you needing a second terminal window open running it separately
 const { startServer } = require('../backend/server.js');
 
-// normally browsers block sounds from playing until you click something
-// first (annoying autoplay rules). this switch tells electron "nah, let
-// sounds play whenever, no click needed"
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
-// this function builds the actual invisible window that covers your screen
+// this window is the big invisible glow/haptics overlay - unchanged
+// from before, still fully click-through, still full screen
 function createPortal() {
-    // ask the computer how big your actual screen is
     const primaryDisplay = screen.getPrimaryDisplay();
     const { width, height } = primaryDisplay.workAreaSize;
 
     const mainWindow = new BrowserWindow({
-        width: width,          // make the window exactly as wide as your screen
-        height: height,        // and exactly as tall
-        transparent: true,     // see-through background
-        frame: false,          // no title bar, no borders, nothing
-        alwaysOnTop: true,     // stays above every other window
-        skipTaskbar: true,     // doesn't show up in your taskbar/dock
-        hasShadow: false,      // no drop shadow around the window edges
+        width: width,
+        height: height,
+        transparent: true,
+        frame: false,
+        alwaysOnTop: true,
+        skipTaskbar: true,
+        hasShadow: false,
         webPreferences: {
             nodeIntegration: true,
             contextIsolation: false,
-            backgroundThrottling: false // stops electron from "slowing down" this window
-                                         // when it thinks it's not being looked at -
-                                         // important since this window is invisible 24/7
+            backgroundThrottling: false
         }
     });
 
-    // THIS is the magic line - it makes the window "click-through", meaning
-    // your mouse clicks pass straight through it to whatever's actually
-    // on your real desktop underneath. otherwise this invisible window
-    // would just block you from clicking anything ever.
-    // { forward: true } is what lets the page still receive mouse
-    // MOVEMENT info (so it can detect hovering) even while clicks and
-    // drags keep passing through everywhere else on the screen
+    // still click-through, still full screen - this part never changes
     mainWindow.setIgnoreMouseEvents(true, { forward: true });
-
-    // keeps this window visible even if you switch desktops/spaces or
-    // go fullscreen on something else - it should always be there
     mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-
-    // actually load our invisible glowing html file into this window
     mainWindow.loadFile('desktop.html');
-
-    // pops open a separate devtools window so you can see console logs
-    // and errors while you're testing. REMEMBER: turn this off before
-    // you actually ship this to anyone, it looks messy
     mainWindow.webContents.openDevTools({ mode: 'detach' });
-
-    // NEW: desktop.html can't flip its own click-through setting by
-    // itself - only this main process can actually do that. so the
-    // page sends us a little message whenever the mouse enters/leaves
-    // the small drop zone in the corner, and we toggle it here on its
-    // behalf. this is what makes drag-and-drop possible on just that
-    // one small area, while the rest of the screen stays click-through
-    ipcMain.on('set-ignore-mouse-events', (event, ignore) => {
-        const win = BrowserWindow.fromWebContents(event.sender);
-        win.setIgnoreMouseEvents(ignore, { forward: true });
-    });
 }
 
-// once electron has fully booted up: start the server FIRST, then build
-// the window. this order matters - the widget needs the server already
-// running so it can immediately ask it "hey what's the pin" on load
+// NEW: this is the second, small, GENUINELY interactive window that
+// actually accepts drag-and-drop. it's not click-through at all - it's
+// a completely normal window, just small and frameless, sitting in the
+// corner. windows' native file-drag system only works on real windows
+// like this, which is why the old "fake drop zone inside the invisible
+// overlay" approach could never have worked, no matter what code we
+// tried in desktop.html
+function createDropZoneWindow() {
+    const primaryDisplay = screen.getPrimaryDisplay();
+    const { width, height } = primaryDisplay.workAreaSize;
+
+    const dropWindow = new BrowserWindow({
+        width: 140,
+        height: 90,
+        x: width - 160,   // bottom-right corner, roughly where the old fake one sat
+        y: height - 110,
+        transparent: true,
+        frame: false,
+        alwaysOnTop: true,
+        skipTaskbar: true,
+        hasShadow: false,
+        resizable: false,
+        webPreferences: {
+            nodeIntegration: true,
+            contextIsolation: false
+        }
+        // deliberately NOT calling setIgnoreMouseEvents here at all -
+        // that's the entire point, this window stays fully interactive
+    });
+
+    dropWindow.loadFile('dropzone.html');
+    dropWindow.webContents.openDevTools({ mode: 'detach' }); // NEW: so we can actually see its console
+}
+
 app.whenReady().then(() => {
     startServer();
     createPortal();
+    createDropZoneWindow(); // NEW
 });
 
-// also once electron's ready, set up a global keyboard shortcut that
-// works system-wide, even if this window has no focus - since the
-// window is click-through, this is the reliable way to test the buzz
 app.whenReady().then(() => {
     globalShortcut.register('CommandOrControl+Shift+Space', () => {
         console.log("dev trigger fired from OS!");
-        // reach into the window and manually run the haptic function
-        // as if a message had actually come through the websocket
         BrowserWindow.getAllWindows()[0].webContents.executeJavaScript('triggerHapticFeedback(null)');
     });
 });
 
-// standard electron cleanup - if every window closes, quit the whole
-// app (except on mac, where apps are supposed to stay running in the
-// background even with no windows open, that's just a mac thing)
 app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();
 });
