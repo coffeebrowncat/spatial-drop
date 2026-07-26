@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const WebSocket = require('ws');
 const { activeRooms, trustedRooms, pendingTransfers, TRANSFER_TIMEOUT_MS, cleanupTransfer } = require('../utils/store');
 
-const CONNECT_PIN = Math.floor(100000 + Math.random() * 900000).toString();
+const CONNECT_PIN = Math.floor(100000 + Math.random() * 9000).toString();
 
 const getPin = (req, res) => {
     res.status(200).json({ pin: CONNECT_PIN });
@@ -10,7 +10,8 @@ const getPin = (req, res) => {
 
 const uploadFiles = (req, res) => {
     const roomId = req.body.roomId;
-    const senderId = req.body.deviceId; // who actually sent this batch
+    const senderId = req.body.deviceId;
+    const targetId = req.body.targetId || null; // NEW — a specific peer, or null for a mass send
 
     if (!req.files || req.files.length === 0) {
         return res.status(400).json({ error: 'no files received' });
@@ -27,23 +28,25 @@ const uploadFiles = (req, res) => {
 
     if (activeRooms.has(roomId)) {
         activeRooms.get(roomId).forEach(client => {
-            // FIXED: this used to compare client.role to senderId, which
-            // are two different kinds of value and could never match —
-            // the filter did nothing. deviceId is the actual unique
-            // identity to exclude the sender by.
-            if (client.readyState === WebSocket.OPEN && client.deviceId !== senderId) {
-                client.send(JSON.stringify({
-                    type: 'incoming_files',
-                    transferId,
-                    count: req.files.length,
-                    fileNames: req.files.map(f => f.originalname),
-                    trusted: trustedRooms.has(roomId)
-                }));
-            }
+            if (client.readyState !== WebSocket.OPEN) return;
+            if (client.deviceId === senderId) return; // never notify the sender itself
+
+            // NEW: if a specific target was chosen, only THAT device
+            // gets notified. no target chosen = everyone else in the
+            // room gets it (mass send).
+            if (targetId && client.deviceId !== targetId) return;
+
+            client.send(JSON.stringify({
+                type: 'incoming_files',
+                transferId,
+                count: req.files.length,
+                fileNames: req.files.map(f => f.originalname),
+                trusted: trustedRooms.has(roomId)
+            }));
         });
     }
 
-    console.log(`[HTTP POST] holding ${req.files.length} file(s), waiting on accept/decline.`);
+    console.log(`[HTTP POST] holding ${req.files.length} file(s), waiting on accept/decline. target: ${targetId || 'everyone'}`);
     res.status(201).json({ success: true, transferId });
 };
 
