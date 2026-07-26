@@ -8,6 +8,7 @@ import {
   StyleSheet,
   SafeAreaView,
   Alert,
+  Keyboard,
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 
@@ -90,9 +91,22 @@ export default function App() {
     }
   };
   const handleIncoming = (data) => {
+    if (data.error) {
+      // the server sends { error: '...' } with no "type" field for
+      // things like a full room — this had no handler before, so it
+      // failed completely silently
+      debugLog(`server error: ${data.error}`);
+      setConnectError(data.error);
+      return;
+    }
+
     if (data.type === 'room_update') {
       setPeers(data.peers.filter((p) => p.deviceId !== deviceIdRef.current));
-      if (stage !== 'radar') crossfadeTo('radar');
+      if (stage !== 'radar') {
+        Keyboard.dismiss();
+        pinInputRef.current?.blur();
+        crossfadeTo('radar');
+      }
       return;
     }
 
