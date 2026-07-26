@@ -12,6 +12,11 @@
     <h1>spatial drop</h1>
     <p>status: <span id="status" style="color: red;">disconnected</span></p>
 
+    <!-- NEW: this box is temporary — it exists purely so we can see -->
+    <!-- errors directly on the phone screen, since there's no easy -->
+    <!-- console access without a Mac. remove once things work. -->
+    <p id="debug" style="color: #888; font-size: 0.8rem; word-break: break-all; padding: 0 10px;"></p>
+
     <div style="margin-top: 30px; padding: 20px; background: #222; border-radius: 10px; display: inline-block;">
         <p style="margin: 0 0 10px 0; color: #888;">1. pick anything</p>
         <input type="file" id="filePicker" multiple style="color: white;">
@@ -20,63 +25,84 @@
     <p style="margin-top: 50px; color: #555; font-size: 1.2rem;">2. swipe UP anywhere to drop</p>
 
     <script>
-        // NEW: registers the tiny service worker file, which is the
-        // other piece (besides the manifest above) that phones require
-        // before they'll let you "install" this as an app icon
+        function debugLog(msg) {
+            console.log(msg);
+            const el = document.getElementById('debug');
+            el.innerText = String(msg);
+        }
+
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('service-worker.js').catch(err => {
                 console.log('service worker registration failed (not a big deal):', err);
             });
         }
 
-        // paste the SAME firebase database url you put in server.js
         const FIREBASE_DB_URL = "https://spatial-drop-default-rtdb.firebaseio.com";
 
-        // ask for the pin shown on the laptop's widget badge
         const roomPin = prompt("enter the pin shown on your laptop:");
+        debugLog(`pin entered: "${roomPin}"`);
 
-        // we don't know the laptop's actual ip yet - we have to look
-        // it up in firebase first, using the pin above
         let laptopip = null;
         let ws;
-        const deviceId = crypto.randomUUID();
 
-        // asks firebase "hey, what ip is pin XXXX pointing at right now"
         async function resolveLaptopIp() {
             document.getElementById('status').innerText = 'looking up your laptop...';
 
-            const res = await fetch(`${FIREBASE_DB_URL}/pins/${roomPin}.json`);
-            const data = await res.json();
+            try {
+                const url = `${FIREBASE_DB_URL}/pins/${roomPin}.json`;
+                debugLog(`fetching: ${url}`);
 
-            if (!data || !data.ip) {
-                document.getElementById('status').innerText = 'pin not found. check it and reload.';
+                const res = await fetch(url);
+                debugLog(`firebase responded with status ${res.status}`);
+
+                const data = await res.json();
+                debugLog(`firebase data: ${JSON.stringify(data)}`);
+
+                if (!data || !data.ip) {
+                    document.getElementById('status').innerText = 'pin not found. check it and reload.';
+                    document.getElementById('status').style.color = 'red';
+                    return null;
+                }
+
+                return data.ip;
+            } catch (err) {
+                // NEW: this is the important part — if the fetch itself
+                // throws (network error, CORS, malformed url, etc), we
+                // now actually SEE it instead of it silently dying
+                debugLog(`FETCH ERROR: ${err.message}`);
+                document.getElementById('status').innerText = 'error looking up laptop — see debug line below';
                 document.getElementById('status').style.color = 'red';
                 return null;
             }
-
-            return data.ip;
         }
 
-        // this is everything that used to run immediately on page load -
-        // now it waits until we actually know the laptop's ip first
         async function connect() {
             laptopip = await resolveLaptopIp();
-            if (!laptopip) return; // lookup failed, bail out, error already shown above
+            if (!laptopip) return;
 
-            // open up a live, always-on connection to the server (the walkie talkie)
+            debugLog(`connecting to ws://${laptopip}:3000`);
             ws = new WebSocket(`ws://${laptopip}:3000`);
 
-            
-            // runs the moment the connection successfully opens
             ws.onopen = () => {
-                console.log('we are in.');
+                debugLog('websocket opened successfully');
                 document.getElementById('status').innerText = 'connected. ready for drop.';
                 document.getElementById('status').style.color = 'green';
-                ws.send(JSON.stringify({ type: 'join', pin: roomPin, role: 'mobile', deviceId }));
+                ws.send(JSON.stringify({ type: 'join', pin: roomPin }));
             };
 
-            // this listens for messages coming BACK from the server,
-            // so the phone can actually tell you what happened after you send something
+            // NEW: these two handlers didn't exist before — if the
+            // websocket fails to connect at all, or gets dropped, you
+            // used to just see nothing. now it shows up.
+            ws.onerror = (err) => {
+                debugLog('WEBSOCKET ERROR — could not connect to the server');
+                document.getElementById('status').innerText = 'websocket connection failed';
+                document.getElementById('status').style.color = 'red';
+            };
+
+            ws.onclose = (event) => {
+                debugLog(`websocket closed. code: ${event.code}, reason: "${event.reason}"`);
+            };
+
             ws.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
@@ -95,16 +121,11 @@
             };
         }
 
-        connect(); // actually kick the whole thing off, right now
+        connect();
 
-        // this is where we keep track of whatever files you picked.
-        // it's an array (a list) so it can hold more than just one
         let selectedFiles = [];
 
-        // runs every time you pick file(s) using the file picker button
         document.getElementById('filePicker').addEventListener('change', (e) => {
-            // Array.from() just turns the weird file-list browser object
-            // into a normal, easy-to-use javascript list
             selectedFiles = Array.from(e.target.files);
 
             if (selectedFiles.length > 0) {
@@ -113,58 +134,37 @@
             }
         });
 
-        // keeps track of where your finger STARTED touching the screen
         let startY = 0;
         document.body.addEventListener('touchstart', (e) => startY = e.touches[0].clientY);
 
-        // --- THE ACTUAL "SEND IT" LOGIC ---
         document.body.addEventListener('touchend', async (e) => {
-            // where your finger ENDED UP when you lifted it
             const endY = e.changedTouches[0].clientY;
-
-            // how far up you swiped (bigger number = swiped further up)
             const distance = startY - endY;
 
-            // only fire if: you swiped up more than 100 pixels, AND you actually picked files
-            // AND we actually managed to connect (laptopip isn't null)
             if (distance > 100 && selectedFiles.length > 0 && laptopip) {
                 document.getElementById('status').innerText = 'dropping massive payload...';
                 document.getElementById('status').style.color = 'orange';
 
-                // FormData is just a "package" that can hold files + normal text
-                // together, in a format the server knows how to unpack
                 const formData = new FormData();
-
-                // stuff EVERY selected file into the package, one by one
                 selectedFiles.forEach(f => formData.append('files', f));
-                // NEW: Make sure we send the roomId so the backend knows which session this belongs to!
-                formData.append('roomId', roomPin); 
-                formData.append('deviceId', deviceId); // add alongside roomId in the upload
-                formData.append('role', 'mobile'); // NEW
+                formData.append('roomId', roomPin);
 
                 try {
-                    // actually send the package over to the server.
-                    // we don't manually set "content-type" because the browser
-                    // is smart enough to figure that part out on its own
                     const response = await fetch(`http://${laptopip}:3000/api/upload`, {
                         method: 'POST',
                         body: formData
                     });
 
                     if (response.ok) {
-                        console.log("transmission safely delivered to server via http stream.");
-                        // we don't say "file dropped" anymore, because it's
-                        // not actually saved yet - the laptop still has to accept it
                         document.getElementById('status').innerText = 'sent — waiting for them to accept';
                         document.getElementById('status').style.color = '#00ffff';
                     }
                 } catch (err) {
-                    console.error("http upload crash:", err);
+                    debugLog(`UPLOAD ERROR: ${err.message}`);
                     document.getElementById('status').innerText = 'drop failed.';
                     document.getElementById('status').style.color = 'red';
                 }
 
-                // reset everything so you're ready to send the next batch
                 selectedFiles = [];
                 document.getElementById('filePicker').value = '';
             }
