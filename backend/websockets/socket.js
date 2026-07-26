@@ -5,85 +5,91 @@ const os = require('os');
 const { activeRooms, trustedRooms, pendingTransfers, cleanupTransfer } = require('../utils/store');
 const { logTransfer } = require('../config/db');
 
-// --- 10. WEBSOCKET SWITCHBOARD (the walkie talkie) ---
-// this is the part that keeps a live, always-open connection to both
-// the phone and the laptop, so they can instantly ping each other
+// NEW: tells everyone currently in a room who else is in it. this is
+// what the mobile radar screen actually renders — without this, a
+// phone joining a room has zero way to know another device is there.
+function broadcastRoomList(pin) {
+    const room = activeRooms.get(pin);
+    if (!room) return;
+
+    const peers = [...room].map((c) => ({
+        deviceId: c.deviceId || null,
+        label: c.label || 'unknown device',
+        role: c.role || null,
+    }));
+
+    room.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify({ type: 'room_update', peers }));
+        }
+    });
+}
+
 function setupWebSockets(server) {
     const wss = new WebSocket.Server({ server });
 
-    // runs once every time SOMETHING (phone or laptop) connects to us
     wss.on('connection', (ws) => {
-        ws.roomId = null; // this device hasn't joined a room yet, blank slate
+        ws.roomId = null;
 
-        // runs every time that connected device sends us a message
         ws.on('message', (message) => {
             try {
-                // try to understand the message as normal readable data (json)
                 const data = JSON.parse(message);
 
-                // --- THE HANDSHAKE: someone's trying to join a room ---
                 if (data.type === 'join') {
-                    const pin = data.pin; // the room code both devices agree on
-                    ws.role = data.role || null; // NEW — 'mobile' or 'desktop'
-                    ws.deviceId = data.deviceId || null; // NEW
-                    // if this room doesn't exist yet, make a brand new empty one
+                    const pin = data.pin;
+
                     if (!activeRooms.has(pin)) {
                         activeRooms.set(pin, new Set());
                     }
                     const room = activeRooms.get(pin);
 
-                    // only 2 devices allowed per room (your phone + your laptop)
                     if (room.size >= 2) {
                         return ws.send(JSON.stringify({ error: 'room is full bro' }));
                     }
 
-                    room.add(ws);       // add this device to the room
-                    ws.roomId = pin;    // remember which room this device is in
+                    // NEW: remember who this socket actually is, so the
+                    // room list broadcast (and later, targeted sends)
+                    // has something real to report
+                    ws.role = data.role || null;
+                    ws.deviceId = data.deviceId || null;
+                    ws.label = data.label || 'unknown device';
+
+                    room.add(ws);
+                    ws.roomId = pin;
                     ws.send(JSON.stringify({ status: 'connected', pin: pin }));
-                    console.log(`someone joined room: ${pin}`);
+                    console.log(`someone joined room: ${pin} (${ws.label})`);
+
+                    broadcastRoomList(pin); // NEW — tell the whole room who's here now
                     return;
                 }
 
-                // --- SOMEONE HIT "ACCEPT" ON THE POPUP ---
                 if (data.type === 'accept_transfer') {
                     const t = pendingTransfers.get(data.transferId);
-                    if (!t) return; // transfer already expired or doesn't exist, ignore
+                    if (!t) return;
 
-                    clearTimeout(t.timeout); // cancel the self-destruct timer, we're keeping these files
+                    clearTimeout(t.timeout);
 
-                    const finalPaths = []; // will fill up with the "real" saved locations
-                    let remaining = t.files.length; // countdown of how many files still need moving
+                    const finalPaths = [];
+                    let remaining = t.files.length;
 
-                    // FIX: this used to use fs.rename(), which silently
-                    // fails with an "EXDEV" error if the temp folder and
-                    // your downloads folder happen to be on different
-                    // drives - that was causing finalPaths to end up
-                    // completely empty, which is why the glow was firing
-                    // but nothing ever actually opened. fs.copyFile always
-                    // works no matter which drive either folder is on, so
-                    // now we copy the file over first, then delete the
-                    // temp original as a separate step right after
                     function finishBatch() {
                         const room = activeRooms.get(t.room);
                         if (room) {
-                            room.forEach(client => {
+                            room.forEach((client) => {
                                 if (client.readyState === WebSocket.OPEN) {
-                                    // tell the laptop "here's where they actually ended up"
                                     client.send(JSON.stringify({ type: 'file_caught', paths: finalPaths }));
                                 }
                             });
                         }
                         trustedRooms.add(t.room);
-                        logTransfer(t.files.length, 'accepted'); // write one row to the sql log
-                        pendingTransfers.delete(data.transferId); // done, forget about this transfer
+                        logTransfer(t.files.length, 'accepted');
+                        pendingTransfers.delete(data.transferId);
                     }
 
-                    // go through every file in the batch and actually move it
-                    // from the temp folder into the real downloads folder
                     t.files.forEach((f, i) => {
                         const finalPath = path.join(
                             os.homedir(), 'Downloads',
-                            `Drop_${Date.now()}_${i}_${f.originalName}` // the "_i_" stops name clashes
+                            `Drop_${Date.now()}_${i}_${f.originalName}`
                         );
 
                         fs.copyFile(f.tempPath, finalPath, (err) => {
@@ -94,12 +100,10 @@ function setupWebSockets(server) {
                                 return;
                             }
 
-                            finalPaths.push(finalPath); // copy worked, count it
+                            finalPaths.push(finalPath);
 
-                            // now that the copy is safely sitting in downloads,
-                            // delete the leftover temp original
                             fs.unlink(f.tempPath, () => {
-                                remaining--; // one less file left to move
+                                remaining--;
                                 if (remaining === 0) finishBatch();
                             });
                         });
@@ -107,17 +111,14 @@ function setupWebSockets(server) {
                     return;
                 }
 
-                // --- SOMEONE HIT "DECLINE" ON THE POPUP ---
                 if (data.type === 'decline_transfer') {
-                    // grab it BEFORE cleanup deletes it, so we still know
-                    // how many files were in it for the log entry below
                     const t = pendingTransfers.get(data.transferId);
-                    if (t) logTransfer(t.files.length, 'declined'); // log the decline too, for a fuller picture
+                    if (t) logTransfer(t.files.length, 'declined');
 
-                    cleanupTransfer(data.transferId); // wipes the temp files, nothing gets kept
+                    cleanupTransfer(data.transferId);
 
                     if (ws.roomId && activeRooms.has(ws.roomId)) {
-                        activeRooms.get(ws.roomId).forEach(client => {
+                        activeRooms.get(ws.roomId).forEach((client) => {
                             if (client.readyState === WebSocket.OPEN) {
                                 client.send(JSON.stringify({ type: 'transfer_declined', transferId: data.transferId }));
                             }
@@ -127,23 +128,20 @@ function setupWebSockets(server) {
                 }
 
             } catch (error) {
-                // if the message wasn't readable json, we just quietly ignore it
-                // instead of crashing the whole server over one weird message
                 console.log("ignored non-json websocket message.");
             }
         });
 
-        // runs when a device disconnects (closes the app, loses wifi, whatever)
         ws.on('close', () => {
             if (ws.roomId && activeRooms.has(ws.roomId)) {
                 const room = activeRooms.get(ws.roomId);
-                room.delete(ws); // take them out of the room
+                room.delete(ws);
 
-                // if literally nobody's left in the room, delete the room too
-                // so we're not just hoarding empty rooms forever
                 if (room.size === 0) {
                     activeRooms.delete(ws.roomId);
-                    trustedRooms.delete(ws.roomId); // everyone's gone, next join is treated as a fresh pairing
+                    trustedRooms.delete(ws.roomId);
+                } else {
+                    broadcastRoomList(ws.roomId); // NEW — tell whoever's left that someone dropped
                 }
                 console.log(`someone left room: ${ws.roomId}`);
             }
