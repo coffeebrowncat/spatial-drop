@@ -39,6 +39,7 @@
         // it up in firebase first, using the pin above
         let laptopip = null;
         let ws;
+        const deviceId = crypto.randomUUID();
 
         // asks firebase "hey, what ip is pin XXXX pointing at right now"
         async function resolveLaptopIp() {
@@ -65,12 +66,13 @@
             // open up a live, always-on connection to the server (the walkie talkie)
             ws = new WebSocket(`ws://${laptopip}:3000`);
 
+            
             // runs the moment the connection successfully opens
             ws.onopen = () => {
                 console.log('we are in.');
                 document.getElementById('status').innerText = 'connected. ready for drop.';
                 document.getElementById('status').style.color = 'green';
-                ws.send(JSON.stringify({ type: 'join', pin: roomPin }));
+                ws.send(JSON.stringify({ type: 'join', pin: roomPin, role: 'mobile', deviceId }));
             };
 
             // this listens for messages coming BACK from the server,
@@ -137,6 +139,8 @@
                 selectedFiles.forEach(f => formData.append('files', f));
                 // NEW: Make sure we send the roomId so the backend knows which session this belongs to!
                 formData.append('roomId', roomPin); 
+                formData.append('deviceId', deviceId); // add alongside roomId in the upload
+                formData.append('role', 'mobile'); // NEW
 
                 try {
                     // actually send the package over to the server.

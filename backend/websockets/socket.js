@@ -24,7 +24,8 @@ function setupWebSockets(server) {
                 // --- THE HANDSHAKE: someone's trying to join a room ---
                 if (data.type === 'join') {
                     const pin = data.pin; // the room code both devices agree on
-
+                    ws.role = data.role || null; // NEW — 'mobile' or 'desktop'
+                    ws.deviceId = data.deviceId || null; // NEW
                     // if this room doesn't exist yet, make a brand new empty one
                     if (!activeRooms.has(pin)) {
                         activeRooms.set(pin, new Set());

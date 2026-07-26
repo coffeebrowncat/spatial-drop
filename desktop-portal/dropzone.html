@@ -126,6 +126,7 @@
             const pinRes = await fetch('http://localhost:3000/api/pin');
             const { pin } = await pinRes.json();
             formData.append('roomId', pin);
+            formData.append('role', 'desktop'); // NEW
 
             console.log('uploading dropped file now...');
             await fetch('http://localhost:3000/api/upload', { method: 'POST', body: formData });

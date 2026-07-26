@@ -19,6 +19,7 @@ const getPin = (req, res) => {
 // any file type lands here now, not just photos
 const uploadFiles = (req, res) => {
     const roomId = req.body.roomId;
+    const senderId = req.body.deviceId; // NEW, replaces senderRole 
 
     // safety check: if somehow no files came through, don't crash, just bail out nicely
     if (!req.files || req.files.length === 0) {
@@ -39,11 +40,12 @@ const uploadFiles = (req, res) => {
         timeout
     });
 
+    console.log('SENDING TO ROOM:', roomId, '| everyone in room:', [...activeRooms.get(roomId) || []].map(c => c.deviceId));
     // now poke everyone in the room and say "hey, files incoming, you want them?"
     // we do NOT send the actual files here, just the names and a count
     if (activeRooms.has(roomId)) {
         activeRooms.get(roomId).forEach(client => {
-            if (client.readyState === WebSocket.OPEN) {
+            if (client.readyState === WebSocket.OPEN && client.deviceId !== senderId) {
                 client.send(JSON.stringify({
                     type: 'incoming_files',
                     transferId,

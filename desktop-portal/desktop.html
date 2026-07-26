@@ -97,7 +97,7 @@
             const res = await fetch('http://localhost:3000/api/pin');
             const { pin } = await res.json();
 
-            ws.send(JSON.stringify({ type: 'join', pin }));
+            ws.send(JSON.stringify({ type: 'join', pin, role: 'desktop' }));
         };
 
         // --- THE HAPTIC FUNCTION ---
