@@ -37,7 +37,7 @@
             });
         }
 
-        const FIREBASE_DB_URL = "https://spatial-drop-default-rtdb.firebaseio.com";
+        const FIREBASE_DB_URL = process.env.FIREBASE_URL;
 
         const roomPin = prompt("enter the pin shown on your laptop:");
         debugLog(`pin entered: "${roomPin}"`);
