@@ -43,7 +43,7 @@ function setupWebSockets(server) {
                     }
                     const room = activeRooms.get(pin);
 
-                    if (room.size >= 2) {
+                    if (room.size >= 5) {
                         return ws.send(JSON.stringify({ error: 'room is full bro' }));
                     }
 
