@@ -79,6 +79,11 @@
         const fs = require('fs');
         const path = require('path');
 
+        // NEW: read the shared machine id main.js passed in, instead of
+        // generating our own — this is what lets the server recognize
+        // desktop.html and dropzone.html as the same physical laptop
+        const deviceId = new URLSearchParams(window.location.search).get('deviceId');
+
         // connect to our own server, since the widget runs on the
         // same computer the server lives on, we can just say "localhost"
         const ws = new WebSocket('ws://localhost:3000');
@@ -97,7 +102,7 @@
             const res = await fetch('http://localhost:3000/api/pin');
             const { pin } = await res.json();
 
-            ws.send(JSON.stringify({ type: 'join', pin, role: 'desktop' }));
+            ws.send(JSON.stringify({ type: 'join', pin, role: 'desktop', deviceId }));
         };
 
         // --- THE HAPTIC FUNCTION ---

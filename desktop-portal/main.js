@@ -1,11 +1,19 @@
 // grabbing the electron tools we need to build an actual desktop app
 const { app, BrowserWindow, screen, globalShortcut } = require('electron');
+const crypto = require('crypto');
 
 require('electron-reload')(__dirname);
 
 const { startServer } = require('../backend/server.js');
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+
+// NEW: one identity for this whole machine, shared by both windows.
+// before this, desktop.html and dropzone.html each generated their
+// own random id, so the server had no way to know they were actually
+// the same physical laptop — which is why sending from dropzone.html
+// still popped the accept dialog on desktop.html too.
+const machineDeviceId = crypto.randomUUID();
 
 // this window is the big invisible glow/haptics overlay - unchanged
 // from before, still fully click-through, still full screen
@@ -31,7 +39,7 @@ function createPortal() {
     // still click-through, still full screen - this part never changes
     mainWindow.setIgnoreMouseEvents(true, { forward: true });
     mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-    mainWindow.loadFile('desktop.html');
+    mainWindow.loadFile('desktop.html', { search: `deviceId=${machineDeviceId}` }); // NEW — shared id
     mainWindow.webContents.openDevTools({ mode: 'detach' });
 }
 
@@ -65,8 +73,8 @@ function createDropZoneWindow() {
         // that's the entire point, this window stays fully interactive
     });
 
-    dropWindow.loadFile('dropzone.html');
-    dropWindow.webContents.openDevTools({ mode: 'detach' }); // NEW: so we can actually see its console
+    dropWindow.loadFile('dropzone.html', { search: `deviceId=${machineDeviceId}` }); // NEW — same shared id
+    dropWindow.webContents.openDevTools({ mode: 'detach' });
 }
 
 app.whenReady().then(() => {
