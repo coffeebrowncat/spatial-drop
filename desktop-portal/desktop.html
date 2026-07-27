@@ -190,6 +190,14 @@
                 console.log('file_caught received, paths:', data.paths);
                 triggerHapticFeedback(data.paths);
             }
+
+            // NEW — this message type existed on the server already but
+            // desktop.html never did anything with it. forward the peer
+            // list to superhub.html via main.js, so the drawer can show
+            // real orbs instead of nothing.
+            if (data.type === 'room_update') {
+                ipcRenderer.send('peers-updated', data.peers.filter((p) => p.deviceId !== deviceId));
+            }
         };
 
         // --- DEV TRIGGER: press spacebar to test the buzz without sending anything real ---

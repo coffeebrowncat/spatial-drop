@@ -1,5 +1,5 @@
 // grabbing the electron tools we need to build an actual desktop app
-const { app, BrowserWindow, screen, globalShortcut } = require('electron');
+const { app, BrowserWindow, screen, globalShortcut, ipcMain } = require('electron');
 const crypto = require('crypto');
 
 require('electron-reload')(__dirname);
@@ -14,6 +14,15 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 // the same physical laptop — which is why sending from dropzone.html
 // still popped the accept dialog on desktop.html too.
 const machineDeviceId = crypto.randomUUID();
+
+let superhubWindow; // NEW — the top-bezel drawer
+
+// NEW: the drawer sits mostly OFF-SCREEN above the display. only a
+// thin 20px sliver pokes into view normally. "opening" it just means
+// sliding the whole window down until it's fully on screen.
+const SLIVER_HEIGHT = 20;
+const DRAWER_HEIGHT = 240;
+const DRAWER_WIDTH = 320;
 
 // this window is the big invisible glow/haptics overlay - unchanged
 // from before, still fully click-through, still full screen
@@ -43,22 +52,19 @@ function createPortal() {
     mainWindow.webContents.openDevTools({ mode: 'detach' });
 }
 
-// NEW: this is the second, small, GENUINELY interactive window that
-// actually accepts drag-and-drop. it's not click-through at all - it's
-// a completely normal window, just small and frameless, sitting in the
-// corner. windows' native file-drag system only works on real windows
-// like this, which is why the old "fake drop zone inside the invisible
-// overlay" approach could never have worked, no matter what code we
-// tried in desktop.html
-function createDropZoneWindow() {
+// NEW — replaces the old corner dropzone. this is the actual
+// interactive drop target now: mostly hidden, slides down from the
+// top bezel when something's being dragged near it.
+function createSuperHub() {
     const primaryDisplay = screen.getPrimaryDisplay();
-    const { width, height } = primaryDisplay.workAreaSize;
+    const { width } = primaryDisplay.workAreaSize;
+    const x = Math.round((width - DRAWER_WIDTH) / 2);
 
-    const dropWindow = new BrowserWindow({
-        width: 140,
-        height: 90,
-        x: width - 160,   // bottom-right corner, roughly where the old fake one sat
-        y: height - 110,
+    superhubWindow = new BrowserWindow({
+        width: DRAWER_WIDTH,
+        height: DRAWER_HEIGHT,
+        x,
+        y: -(DRAWER_HEIGHT - SLIVER_HEIGHT), // only the bottom sliver is on-screen
         transparent: true,
         frame: false,
         alwaysOnTop: true,
@@ -69,18 +75,48 @@ function createDropZoneWindow() {
             nodeIntegration: true,
             contextIsolation: false
         }
-        // deliberately NOT calling setIgnoreMouseEvents here at all -
-        // that's the entire point, this window stays fully interactive
+        // not click-through — same reasoning as the old dropzone: real
+        // OS drag-and-drop only works on a genuinely interactive window
     });
 
-    dropWindow.loadFile('dropzone.html', { search: `deviceId=${machineDeviceId}` }); // NEW — same shared id
-    dropWindow.webContents.openDevTools({ mode: 'detach' });
+    superhubWindow.loadFile('superhub.html', { search: `deviceId=${machineDeviceId}` });
 }
+
+// NEW — electron has no built-in way to animate a window's position,
+// so this just steps it manually, ~60fps, over ~200ms
+function slideSuperHub(open) {
+    if (!superhubWindow) return;
+    const bounds = superhubWindow.getBounds();
+    const startY = bounds.y;
+    const targetY = open ? 0 : -(DRAWER_HEIGHT - SLIVER_HEIGHT);
+    const steps = 12;
+    let i = 0;
+
+    const interval = setInterval(() => {
+        i++;
+        const progress = i / steps;
+        const y = Math.round(startY + (targetY - startY) * progress);
+        superhubWindow.setBounds({ x: bounds.x, y, width: bounds.width, height: bounds.height });
+        if (i >= steps) clearInterval(interval);
+    }, 16);
+}
+
+// NEW — superhub.html asks main.js to slide it open/closed
+ipcMain.on('superhub-slide', (event, open) => slideSuperHub(open));
+
+// NEW — desktop.html already has the live websocket connection and
+// gets room_update messages. rather than give superhub.html its OWN
+// websocket connection (which would eat a second room slot for the
+// same physical laptop), desktop.html just forwards the peer list
+// here, and we relay it onward to superhub.html.
+ipcMain.on('peers-updated', (event, peers) => {
+    if (superhubWindow) superhubWindow.webContents.send('peers-updated', peers);
+});
 
 app.whenReady().then(() => {
     startServer();
     createPortal();
-    createDropZoneWindow(); // NEW
+    createSuperHub(); // NEW — replaces createDropZoneWindow()
 });
 
 app.whenReady().then(() => {

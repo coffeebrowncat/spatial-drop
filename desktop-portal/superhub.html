@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        html, body {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            overflow: hidden; background: transparent;
+        }
+
+        /* the whole window, top-to-bottom. only the bottom SLIVER_HEIGHT
+           worth of this is ever on-screen when closed — see main.js */
+        #drawer {
+            width: 100%; height: 100%;
+            display: flex; flex-direction: column;
+            font-family: -apple-system, sans-serif;
+        }
+
+        /* the always-visible sliver — deliberately minimal, this is the
+           "non-distracting" part. just a thin line and the pin. */
+        #sliver {
+            height: 20px;
+            flex-shrink: 0;
+            margin-top: auto;
+            display: flex; align-items: center; justify-content: center;
+            background: rgba(14, 10, 9, 0.85);
+            border-bottom: 1px solid rgba(240, 201, 138, 0.25);
+        }
+        #sliver span {
+            font-size: 9px; letter-spacing: 2px; color: #6b5040;
+        }
+
+        /* the full drawer content, only meaningfully visible once the
+           whole window has slid down into view */
+        #content {
+            flex: 1;
+            background: rgba(14, 10, 9, 0.92);
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            position: relative;
+        }
+
+        .orb-wrap {
+            position: absolute;
+            display: flex; flex-direction: column; align-items: center; gap: 4px;
+            transition: transform 0.15s ease;
+        }
+        .orb {
+            width: 26px; height: 26px; border-radius: 50%;
+            background: radial-gradient(circle, #c9a084, #5a463a);
+            box-shadow: 0 0 0 1px rgba(240,201,138,0.15);
+        }
+        .orb-wrap.drag-over .orb {
+            background: radial-gradient(circle, #fff6e0, #f0c98a);
+            transform: scale(1.15);
+        }
+        .orb-label {
+            font-size: 9px; color: #8a6a52;
+        }
+
+        #dropHint {
+            font-size: 10px; letter-spacing: 1px; color: #4a3a30;
+        }
+    </style>
+</head>
+<body>
+    <div id="drawer">
+        <div id="content">
+            <div id="peerField" style="position:relative; width:260px; height:180px;"></div>
+            <div id="dropHint">drop anywhere to send to everyone — drop on a device to target it</div>
+        </div>
+        <div id="sliver"><span id="pinBadge">----</span></div>
+    </div>
+
+    <script>
+        const { ipcRenderer } = require('electron');
+        const fs = require('fs');
+        const path = require('path');
+        const { webUtils } = require('electron');
+
+        const deviceId = new URLSearchParams(window.location.search).get('deviceId');
+        let peers = [];
+        let currentPin = null;
+
+        fetch('http://localhost:3000/api/pin')
+            .then((res) => res.json())
+            .then((data) => {
+                currentPin = data.pin;
+                document.getElementById('pinBadge').textContent = data.pin;
+            })
+            .catch((err) => console.error('couldnt fetch pin:', err));
+
+        // NEW — peer list arrives via IPC from desktop.html, not our own
+        // websocket connection (see main.js for why)
+        ipcRenderer.on('peers-updated', (event, updatedPeers) => {
+            peers = updatedPeers;
+            renderPeers();
+        });
+
+        function peerPosition(i, total) {
+            const angle = (i / Math.max(total, 1)) * Math.PI * 2;
+            return { x: Math.cos(angle) * 70, y: Math.cos(angle) * 0 + Math.sin(angle) * 60 };
+        }
+
+        function renderPeers() {
+            const field = document.getElementById('peerField');
+            field.innerHTML = '';
+            peers.forEach((peer, i) => {
+                const { x, y } = peerPosition(i, peers.length);
+                const wrap = document.createElement('div');
+                wrap.className = 'orb-wrap';
+                wrap.dataset.deviceId = peer.deviceId;
+                wrap.style.left = `${130 + x - 13}px`;
+                wrap.style.top = `${90 + y - 13}px`;
+                wrap.innerHTML = `<div class="orb"></div><div class="orb-label">${peer.label}</div>`;
+                field.appendChild(wrap);
+            });
+        }
+
+        // --- slide open on drag enter, slide closed on drag leave ---
+        let leaveTimeout = null;
+
+        document.body.addEventListener('dragenter', (e) => {
+            e.preventDefault();
+            clearTimeout(leaveTimeout);
+            ipcRenderer.send('superhub-slide', true);
+        });
+
+        document.body.addEventListener('dragover', (e) => e.preventDefault());
+
+        document.body.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            // small debounce — dragleave fires a lot as the cursor moves
+            // between child elements, this stops it from flickering shut
+            clearTimeout(leaveTimeout);
+            leaveTimeout = setTimeout(() => ipcRenderer.send('superhub-slide', false), 300);
+        });
+
+        // highlight whichever orb is currently under the drag
+        document.body.addEventListener('dragover', (e) => {
+            document.querySelectorAll('.orb-wrap').forEach((el) => {
+                const rect = el.getBoundingClientRect();
+                const cx = rect.left + rect.width / 2;
+                const cy = rect.top + rect.height / 2;
+                const dist = Math.hypot(e.clientX - cx, e.clientY - cy);
+                el.classList.toggle('drag-over', dist < 30);
+            });
+        });
+
+        document.body.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            clearTimeout(leaveTimeout);
+
+            const file = e.dataTransfer.files[0];
+            if (!file) return;
+
+            const filePath = webUtils.getPathForFile(file);
+            if (!filePath) return;
+
+            // was it dropped on a specific orb? if so, that's the target
+            let targetId = null;
+            document.querySelectorAll('.orb-wrap').forEach((el) => {
+                const rect = el.getBoundingClientRect();
+                const cx = rect.left + rect.width / 2;
+                const cy = rect.top + rect.height / 2;
+                const dist = Math.hypot(e.clientX - cx, e.clientY - cy);
+                if (dist < 30) targetId = el.dataset.deviceId;
+            });
+
+            const buffer = fs.readFileSync(filePath);
+            const blob = new Blob([buffer]);
+            const filename = path.basename(filePath);
+
+            const formData = new FormData();
+            formData.append('files', blob, filename);
+            formData.append('roomId', currentPin);
+            formData.append('deviceId', deviceId);
+            if (targetId) formData.append('targetId', targetId); // NEW — omitted entirely for a mass send
+
+            console.log('uploading dropped file, target:', targetId || 'everyone');
+            await fetch('http://localhost:3000/api/upload', { method: 'POST', body: formData });
+            console.log('upload finished');
+
+            document.querySelectorAll('.orb-wrap').forEach((el) => el.classList.remove('drag-over'));
+            setTimeout(() => ipcRenderer.send('superhub-slide', false), 500);
+        });
+    </script>
+</body>
+</html>
