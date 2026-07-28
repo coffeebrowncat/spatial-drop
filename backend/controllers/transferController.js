@@ -2,7 +2,10 @@ const crypto = require('crypto');
 const WebSocket = require('ws');
 const { activeRooms, trustedRooms, pendingTransfers, TRANSFER_TIMEOUT_MS, cleanupTransfer } = require('../utils/store');
 
-const CONNECT_PIN = Math.floor(100000 + Math.random() * 9000).toString();
+// FIXED: this had gotten changed to `* 9000`, which only ever
+// produces numbers from 100000-109000 (always starts with "10" —
+// barely random at all). Back to a real 6-digit range.
+const CONNECT_PIN = Math.floor(100000 + Math.random() * 900000).toString();
 
 const getPin = (req, res) => {
     res.status(200).json({ pin: CONNECT_PIN });
@@ -11,7 +14,7 @@ const getPin = (req, res) => {
 const uploadFiles = (req, res) => {
     const roomId = req.body.roomId;
     const senderId = req.body.deviceId;
-    const targetId = req.body.targetId || null; // NEW — a specific peer, or null for a mass send
+    const targetId = req.body.targetId || null;
 
     if (!req.files || req.files.length === 0) {
         return res.status(400).json({ error: 'no files received' });
@@ -29,11 +32,7 @@ const uploadFiles = (req, res) => {
     if (activeRooms.has(roomId)) {
         activeRooms.get(roomId).forEach(client => {
             if (client.readyState !== WebSocket.OPEN) return;
-            if (client.deviceId === senderId) return; // never notify the sender itself
-
-            // NEW: if a specific target was chosen, only THAT device
-            // gets notified. no target chosen = everyone else in the
-            // room gets it (mass send).
+            if (client.deviceId === senderId) return;
             if (targetId && client.deviceId !== targetId) return;
 
             client.send(JSON.stringify({
@@ -88,10 +87,36 @@ const deleteTransfer = (req, res) => {
     res.status(200).json({ success: true, message: `transfer ${transferId} canceled and cleaned up.` });
 };
 
+// this is what actually lets a phone pull real file bytes, instead of
+// files only ever being able to land in the laptop's own Downloads
+const downloadTransfer = (req, res) => {
+    const transferId = req.params.id;
+    const t = pendingTransfers.get(transferId);
+
+    if (!t) {
+        return res.status(404).json({ error: 'transfer not found, expired, or already downloaded' });
+    }
+
+    const file = t.files[0]; // single-file download for now — multi-file zip bundling is a real follow-up
+    res.download(file.tempPath, file.originalName, (err) => {
+        if (err) {
+            console.error('download stream error:', err);
+            return;
+        }
+        // clean up only after the download actually finished successfully
+        clearTimeout(t.timeout);
+        fs.unlink(file.tempPath, () => {});
+        pendingTransfers.delete(transferId);
+    });
+};
+
+const fs = require('fs');
+
 module.exports = {
     getPin,
     uploadFiles,
     CONNECT_PIN,
     updateTransfer,
-    deleteTransfer
+    deleteTransfer,
+    downloadTransfer
 };
