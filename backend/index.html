@@ -12,9 +12,6 @@
     <h1>spatial drop</h1>
     <p>status: <span id="status" style="color: red;">disconnected</span></p>
 
-    <!-- NEW: this box is temporary — it exists purely so we can see -->
-    <!-- errors directly on the phone screen, since there's no easy -->
-    <!-- console access without a Mac. remove once things work. -->
     <p id="debug" style="color: #888; font-size: 0.8rem; word-break: break-all; padding: 0 10px;"></p>
 
     <div style="margin-top: 30px; padding: 20px; background: #222; border-radius: 10px; display: inline-block;">
@@ -37,7 +34,18 @@
             });
         }
 
-        const FIREBASE_DB_URL = process.env.FIREBASE_URL;
+        // FIXED: this was `process.env.FIREBASE_URL` — but this is a
+        // plain browser page, not Node.js. `process` doesn't exist in
+        // a browser at all, so this line was crashing immediately,
+        // before connect() ever even ran. hardcoded back to the real
+        // value (same one server.js uses via its .env file).
+        //
+        // real fix for "duplicated in two places," if you want it
+        // later: add a tiny GET /api/config route on the server that
+        // returns { firebaseUrl: process.env.FIREBASE_URL } — that
+        // code runs on the SERVER, which does have process.env — and
+        // have this page fetch() that once on load instead.
+        const FIREBASE_DB_URL = "https://spatial-drop-default-rtdb.firebaseio.com";
 
         const roomPin = prompt("enter the pin shown on your laptop:");
         debugLog(`pin entered: "${roomPin}"`);
@@ -66,9 +74,6 @@
 
                 return data.ip;
             } catch (err) {
-                // NEW: this is the important part — if the fetch itself
-                // throws (network error, CORS, malformed url, etc), we
-                // now actually SEE it instead of it silently dying
                 debugLog(`FETCH ERROR: ${err.message}`);
                 document.getElementById('status').innerText = 'error looking up laptop — see debug line below';
                 document.getElementById('status').style.color = 'red';
@@ -90,9 +95,6 @@
                 ws.send(JSON.stringify({ type: 'join', pin: roomPin }));
             };
 
-            // NEW: these two handlers didn't exist before — if the
-            // websocket fails to connect at all, or gets dropped, you
-            // used to just see nothing. now it shows up.
             ws.onerror = (err) => {
                 debugLog('WEBSOCKET ERROR — could not connect to the server');
                 document.getElementById('status').innerText = 'websocket connection failed';
@@ -116,7 +118,7 @@
                         document.getElementById('status').style.color = 'red';
                     }
                 } catch (e) {
-                    // not something we understand, just ignore it, no biggie
+                    // not something we understand, just ignore it
                 }
             };
         }
