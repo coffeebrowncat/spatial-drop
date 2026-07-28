@@ -14,6 +14,9 @@ import {
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Svg, { Circle, Line, Defs, RadialGradient, Stop } from 'react-native-svg';
 import * as DocumentPicker from 'expo-document-picker';
+import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
@@ -140,6 +143,36 @@ export default function App() {
       return null;
     }
   };
+  // FIXED — this is the actual missing piece. sending "accept_transfer"
+  // used to be the WHOLE accept flow, but that only ever told the
+  // server "yes" — nothing ever pulled the actual file bytes onto the
+  // phone. now, accepting also downloads the real file via the new
+  // /api/download/:id route, saves it to the app's local storage, and
+  // opens the share sheet so you can actually keep it somewhere real
+  // (Files, Photos, wherever) — phones can't just have a file silently
+  // "appear" in a Downloads folder the way a desktop can.
+  const acceptAndDownload = async (transferId) => {
+    wsRef.current.send(JSON.stringify({ type: 'accept_transfer', transferId }));
+    setStatus('receiving...');
+
+    try {
+      const destUri = FileSystem.cacheDirectory + `spatialdrop_${transferId}`;
+      const result = await FileSystem.downloadAsync(
+        `http://${hostIpRef.current}:3000/api/download/${transferId}`,
+        destUri
+      );
+      debugLog(`downloaded to ${result.uri}`);
+
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(result.uri);
+      }
+      setStatus(selectedFiles.length ? 'flick up to drop' : 'pick anything');
+    } catch (err) {
+      debugLog(`DOWNLOAD ERROR: ${err.message}`);
+      setStatus('receive failed');
+    }
+  };
+
   const handleIncoming = (data) => {
     if (data.error) {
       // the server sends { error: '...' } with no "type" field for
@@ -162,7 +195,7 @@ export default function App() {
 
     if (data.type === 'incoming_files') {
       if (data.trusted) {
-        wsRef.current.send(JSON.stringify({ type: 'accept_transfer', transferId: data.transferId }));
+        acceptAndDownload(data.transferId);
         return;
       }
       Alert.alert(
@@ -177,8 +210,7 @@ export default function App() {
           },
           {
             text: 'accept',
-            onPress: () =>
-              wsRef.current.send(JSON.stringify({ type: 'accept_transfer', transferId: data.transferId })),
+            onPress: () => acceptAndDownload(data.transferId),
           },
         ]
       );
@@ -258,12 +290,51 @@ export default function App() {
   // on an actual upward flick, matching the original "1. pick
   // anything / 2. swipe UP to drop" flow.
 
-  const pickFiles = async () => {
+  // FIXED — this used to only offer DocumentPicker, which on iOS/Android
+  // only shows the generic "Files" app, not the actual photo/video
+  // library. Photos and Files are two genuinely separate system APIs on
+  // both platforms — there's no single picker that covers both. now
+  // this asks which source you want, then routes to the right one.
+  const pickFiles = () => {
+    Alert.alert('pick anything', 'choose a source', [
+      { text: 'cancel', style: 'cancel' },
+      { text: 'photos', onPress: pickFromPhotos },
+      { text: 'files', onPress: pickFromFiles },
+    ]);
+  };
+
+  const pickFromFiles = async () => {
     const result = await DocumentPicker.getDocumentAsync({ multiple: true, copyToCacheDirectory: true });
     if (result.canceled) return;
 
     setSelectedFiles(result.assets);
     setStatus(`${result.assets.length} file(s) loaded. ready to flick.`);
+  };
+
+  const pickFromPhotos = async () => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      setStatus('photo access denied — check phone settings');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images', 'videos'], // covers both photos and videos in the library
+      allowsMultipleSelection: true,
+    });
+    if (result.canceled) return;
+
+    // normalize to the exact same shape DocumentPicker gives us, so
+    // sendFiles below doesn't need to know or care which source a file
+    // came from
+    const normalized = result.assets.map((a, i) => ({
+      uri: a.uri,
+      name: a.fileName || `photo_${Date.now()}_${i}`,
+      mimeType: a.mimeType || (a.type === 'video' ? 'video/mp4' : 'image/jpeg'),
+    }));
+
+    setSelectedFiles(normalized);
+    setStatus(`${normalized.length} file(s) loaded. ready to flick.`);
   };
 
   const sendFiles = async () => {
