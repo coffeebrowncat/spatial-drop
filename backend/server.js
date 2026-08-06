@@ -20,6 +20,7 @@ const fs = require('fs');
 // Import Modular Components
 const { connectMongo } = require('./config/db');
 const transferRoutes = require('./routes/transferRoutes');
+const userRoutes = require('./routes/userRoutes');
 const { setupWebSockets } = require('./websockets/socket');
 const { CONNECT_PIN } = require('./controllers/transferController');
 const { getLocalIp, publishPinToFirebase } = require('./utils/firebase');
@@ -58,6 +59,7 @@ app.use(express.static(path.join(__dirname, '.')));
 
 // Mount our external API routes
 app.use('/api', transferRoutes);
+app.use('/api', userRoutes);
 
 // when someone loads the homepage, specifically hand them index.html
 app.get('/', (req, res) => {
