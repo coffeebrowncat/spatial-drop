@@ -7,19 +7,19 @@
     <link rel="manifest" href="manifest.json">
 </head>
 <body
-    style="font-family: sans-serif; text-align: center; padding: 50px; min-height: 100vh; margin: 0; background-color: #111; color: white; overflow-x: hidden;">
+    style="font-family: sans-serif; text-align: center; padding: 50px; min-height: 100vh; margin: 0; background-color: #121110; color: #F2EDE6; overflow-x: hidden;">
 
     <h1>spatial drop</h1>
-    <p>status: <span id="status" style="color: red;">disconnected</span></p>
+    <p>status: <span id="status" style="color: #D95B5B;">disconnected</span></p>
 
-    <p id="debug" style="color: #888; font-size: 0.8rem; word-break: break-all; padding: 0 10px;"></p>
+    <p id="debug" style="color: #8A8580; font-size: 0.8rem; word-break: break-all; padding: 0 10px;"></p>
 
-    <div style="margin-top: 30px; padding: 20px; background: #222; border-radius: 10px; display: inline-block;">
-        <p style="margin: 0 0 10px 0; color: #888;">1. pick anything</p>
-        <input type="file" id="filePicker" multiple style="color: white;">
+    <div style="margin-top: 30px; padding: 20px; background: #1C1A18; border-radius: 10px; display: inline-block;">
+        <p style="margin: 0 0 10px 0; color: #8A8580;">1. pick anything</p>
+        <input type="file" id="filePicker" multiple style="color: #F2EDE6;">
     </div>
 
-    <p style="margin-top: 50px; color: #555; font-size: 1.2rem;">2. swipe UP anywhere to drop</p>
+    <p style="margin-top: 50px; color: #8A8580; font-size: 1.2rem;">2. swipe UP anywhere to drop</p>
 
     <script>
         function debugLog(msg) {
@@ -53,8 +53,18 @@
         let laptopip = null;
         let ws;
 
+        // status color palette — same graphite/cherry family as the mobile
+        // app and desktop drawer now (COLORS.js): cherry for "something's
+        // actively moving," warm off-white for neutral/ready states, and
+        // the shared error red for anything that failed.
+        const STATUS_ERROR = '#D95B5B';
+        const STATUS_NEUTRAL = '#F2EDE6';
+        const STATUS_MUTED = '#8A8580';
+        const STATUS_ACTIVE = '#8C1A3F';
+
         async function resolveLaptopIp() {
             document.getElementById('status').innerText = 'looking up your laptop...';
+            document.getElementById('status').style.color = STATUS_MUTED;
 
             try {
                 const url = `${FIREBASE_DB_URL}/pins/${roomPin}.json`;
@@ -68,7 +78,7 @@
 
                 if (!data || !data.ip) {
                     document.getElementById('status').innerText = 'pin not found. check it and reload.';
-                    document.getElementById('status').style.color = 'red';
+                    document.getElementById('status').style.color = STATUS_ERROR;
                     return null;
                 }
 
@@ -76,7 +86,7 @@
             } catch (err) {
                 debugLog(`FETCH ERROR: ${err.message}`);
                 document.getElementById('status').innerText = 'error looking up laptop — see debug line below';
-                document.getElementById('status').style.color = 'red';
+                document.getElementById('status').style.color = STATUS_ERROR;
                 return null;
             }
         }
@@ -91,14 +101,24 @@
             ws.onopen = () => {
                 debugLog('websocket opened successfully');
                 document.getElementById('status').innerText = 'connected. ready for drop.';
-                document.getElementById('status').style.color = 'green';
+                document.getElementById('status').style.color = STATUS_NEUTRAL;
                 ws.send(JSON.stringify({ type: 'join', pin: roomPin }));
             };
 
+            // FIXED — this used to just say "websocket connection failed"
+            // with zero context. that error fires for two totally
+            // different reasons: (1) your laptop's ip changed and firebase
+            // had the old one (now self-heals — see startIpWatcher in
+            // utils/firebase.js), or (2) your phone and laptop are on two
+            // different networks entirely, which no amount of retrying
+            // fixes — a local ip like 192.168.x.x only means anything to
+            // devices on that same router. can't tell those two apart
+            // from here, so the message now points at the single most
+            // common real-world cause instead of leaving you guessing.
             ws.onerror = (err) => {
                 debugLog('WEBSOCKET ERROR — could not connect to the server');
-                document.getElementById('status').innerText = 'websocket connection failed';
-                document.getElementById('status').style.color = 'red';
+                document.getElementById('status').innerText = 'connection failed — make sure your phone and laptop are on the same wifi';
+                document.getElementById('status').style.color = STATUS_ERROR;
             };
 
             ws.onclose = (event) => {
@@ -111,11 +131,11 @@
 
                     if (data.type === 'file_caught') {
                         document.getElementById('status').innerText = 'they caught it!';
-                        document.getElementById('status').style.color = '#00ffff';
+                        document.getElementById('status').style.color = STATUS_NEUTRAL;
                     }
                     if (data.type === 'transfer_declined') {
                         document.getElementById('status').innerText = 'declined.';
-                        document.getElementById('status').style.color = 'red';
+                        document.getElementById('status').style.color = STATUS_ERROR;
                     }
                 } catch (e) {
                     // not something we understand, just ignore it
@@ -132,7 +152,7 @@
 
             if (selectedFiles.length > 0) {
                 document.getElementById('status').innerText = `${selectedFiles.length} file(s) loaded. ready to flick.`;
-                document.getElementById('status').style.color = 'yellow';
+                document.getElementById('status').style.color = STATUS_ACTIVE;
             }
         });
 
@@ -145,7 +165,7 @@
 
             if (distance > 100 && selectedFiles.length > 0 && laptopip) {
                 document.getElementById('status').innerText = 'dropping massive payload...';
-                document.getElementById('status').style.color = 'orange';
+                document.getElementById('status').style.color = STATUS_ACTIVE;
 
                 const formData = new FormData();
                 selectedFiles.forEach(f => formData.append('files', f));
@@ -159,12 +179,12 @@
 
                     if (response.ok) {
                         document.getElementById('status').innerText = 'sent — waiting for them to accept';
-                        document.getElementById('status').style.color = '#00ffff';
+                        document.getElementById('status').style.color = STATUS_NEUTRAL;
                     }
                 } catch (err) {
                     debugLog(`UPLOAD ERROR: ${err.message}`);
                     document.getElementById('status').innerText = 'drop failed.';
-                    document.getElementById('status').style.color = 'red';
+                    document.getElementById('status').style.color = STATUS_ERROR;
                 }
 
                 selectedFiles = [];

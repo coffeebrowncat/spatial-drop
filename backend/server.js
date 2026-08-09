@@ -20,10 +20,9 @@ const fs = require('fs');
 // Import Modular Components
 const { connectMongo } = require('./config/db');
 const transferRoutes = require('./routes/transferRoutes');
-const userRoutes = require('./routes/userRoutes');
 const { setupWebSockets } = require('./websockets/socket');
 const { CONNECT_PIN } = require('./controllers/transferController');
-const { getLocalIp, publishPinToFirebase } = require('./utils/firebase');
+const { getLocalIp, publishPinToFirebase, startIpWatcher } = require('./utils/firebase');
 
 // spin up the actual server app
 const app = express();
@@ -59,7 +58,6 @@ app.use(express.static(path.join(__dirname, '.')));
 
 // Mount our external API routes
 app.use('/api', transferRoutes);
-app.use('/api', userRoutes);
 
 // when someone loads the homepage, specifically hand them index.html
 app.get('/', (req, res) => {
@@ -75,13 +73,25 @@ setupWebSockets(server);
 // (the widget) can start the server itself instead of you needing to
 // open a second terminal and type "node server.js" by hand every time
 function startServer() {
-    server.listen(3000, '0.0.0.0', () => {
-        console.log("switchboard operator awake and listening on port 3000...");
+    // Render (and most cloud hosts) assign their own port at runtime via
+    // process.env.PORT — hardcoding 3000 makes the deploy fail its health
+    // check. Falls back to 3000 so `node server.js` on your own laptop
+    // still works exactly like before, no other behavior changes.
+    const PORT = process.env.PORT || 3000;
+
+    server.listen(PORT, '0.0.0.0', () => {
+        console.log(`switchboard operator awake and listening on port ${PORT}...`);
         console.log(`\n🔑  CONNECT PIN: ${CONNECT_PIN}\n`); // big and obvious in the terminal
 
         const ip = getLocalIp();
         if (ip) {
             publishPinToFirebase(CONNECT_PIN, ip); // tell firebase where we are
+
+            // NEW — keep that ip fresh instead of publishing once at boot
+            // and hoping it never changes underneath us. see the big
+            // comment on startIpWatcher in utils/firebase.js for exactly
+            // what this does and doesn't cover.
+            startIpWatcher(CONNECT_PIN, ip);
         } else {
             console.error("couldn't figure out local ip, firebase pin lookup won't work — fall back to typing the ip manually.");
         }
