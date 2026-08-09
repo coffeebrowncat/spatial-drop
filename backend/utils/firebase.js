@@ -47,4 +47,48 @@ function publishPinToFirebase(pin, ip) {
     req.end();
 }
 
-module.exports = { getLocalIp, publishPinToFirebase, FIREBASE_DB_URL };
+// NEW — WATCH FOR IP CHANGES. the old version of this file only ever
+// published the ip ONCE, right when the server booted. if your laptop's
+// local ip changes after that — dhcp lease renewal, router reboot,
+// switching from wifi to ethernet, anything where you're still on the
+// SAME network, just got handed a different address — firebase keeps
+// pointing at the old dead ip forever, until you manually restart the
+// app and it re-publishes at boot.
+//
+// this polls getLocalIp() every few seconds and only calls
+// publishPinToFirebase again if the answer actually changed, so it's
+// cheap and doesn't spam firebase every tick for no reason. call this
+// once, right after your initial boot-time publish, and hang onto the
+// returned interval id if you ever want to stop it (e.g. on shutdown).
+//
+// NOTE — this does NOT and CANNOT fix the laptop switching to a
+// DIFFERENT network than the phone (different wifi, laptop on wifi
+// while the phone's on cellular, laptop tethers to a hotspot, etc).
+// local ips like 192.168.x.x only mean anything to other devices on
+// that exact same router — there's no ip we could publish that would
+// make that reachable from a different network. that case needs a
+// relay/public server sitting in between, which is a bigger, separate
+// project. this just keeps things correct as long as you're on the
+// same network the whole time, which covers the vast majority of the
+// actual "it randomly stopped working" cases.
+function startIpWatcher(pin, currentIp, intervalMs = 5000) {
+    let lastKnownIp = currentIp;
+
+    return setInterval(() => {
+        const freshIp = getLocalIp();
+
+        if (!freshIp) {
+            // network dropped entirely (wifi off, etc) — nothing useful
+            // to publish, just wait for it to come back
+            return;
+        }
+
+        if (freshIp !== lastKnownIp) {
+            console.log(`local ip changed from ${lastKnownIp} to ${freshIp} — republishing to firebase.`);
+            lastKnownIp = freshIp;
+            publishPinToFirebase(pin, freshIp);
+        }
+    }, intervalMs);
+}
+
+module.exports = { getLocalIp, publishPinToFirebase, startIpWatcher, FIREBASE_DB_URL };

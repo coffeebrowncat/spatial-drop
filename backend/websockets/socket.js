@@ -13,6 +13,7 @@ function broadcastRoomList(pin) {
         deviceId: c.deviceId || null,
         label: c.label || 'unknown device',
         role: c.role || null,
+        avatarId: c.avatarId || null, // NEW — passed through so superhub.html can render the sender's real chosen avatar instead of a blank grey orb
     }));
 
     room.forEach((client) => {
@@ -47,6 +48,7 @@ function setupWebSockets(server) {
                     ws.role = data.role || null;
                     ws.deviceId = data.deviceId || null;
                     ws.label = data.label || 'unknown device';
+                    ws.avatarId = data.avatarId || null; // NEW — mobile's App.js already sends this on join, we just weren't storing it. see broadcastRoomList above for where it goes next.
 
                     room.add(ws);
                     ws.roomId = pin;
@@ -71,6 +73,18 @@ function setupWebSockets(server) {
                 // laptop's disk at all — just mark it accepted and leave
                 // the file in temp storage for the phone to pull via
                 // GET /api/download/:id.
+                // NEW — App.js only sent avatarId ONCE before, in the join
+                // message. if someone changes their avatar in Settings
+                // while already sitting in a room, this is what actually
+                // updates it for everyone else looking at the peer list
+                // (superhub.html's orbs, etc) instead of them being stuck
+                // showing whatever avatar was picked at join time.
+                if (data.type === 'avatar_update') {
+                    ws.avatarId = data.avatarId || null;
+                    if (ws.roomId) broadcastRoomList(ws.roomId);
+                    return;
+                }
+
                 if (data.type === 'accept_transfer') {
                     const t = pendingTransfers.get(data.transferId);
                     if (!t) return;
