@@ -24,6 +24,18 @@
             overflow: hidden;
         }
 
+        /* recolored off the mobile app's real palette (constants/colors.js)
+           — graphite bezel background, cherry-tinted hairline borders.
+           this used to be a straight teal/blue tab (rgba(40,121,127,...)
+           for the sliver, rgba(20,135,217,...) for the content wash) —
+           that's fixed now, along with the muted greys being pushed
+           slightly warm to match the rest of the graphite palette
+           instead of flat #666666. */
+        /* brighter than #content on purpose now (0.95 vs 0.6) so the sliver
+           actually reads as its own visible tab at rest, and the border is
+           just a slightly lighter shade of the SAME background color
+           instead of a contrasting cherry line — reads as one seamless
+           bezel instead of a color outline sitting on top of it */
         #sliver {
             width: 21px;
             height: 98.5%;
@@ -32,9 +44,9 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            background: rgba(40, 121, 127, 0.558);
-            border-top: 1px solid rgba(44, 168, 199, 0.045);
-            border-bottom: 1px solid rgba(44, 168, 199, 0.045);
+            background:  rgba(77, 1, 25, 0.493);
+            border-top: 1px solid rgba(77, 1, 25, 0.4);
+            border-bottom: 1px solid rgba(77, 1, 25, 0.4);
             cursor: pointer;
         }
 
@@ -42,20 +54,22 @@
             font-size: 15px;
             writing-mode: vertical-rl;
             letter-spacing: 2px;
-            color: #a2a8a8;
+            color: #8A8580;
+            /* COLORS.mutedText */
             transform: rotate(270deg);
         }
 
         #content {
             flex: 1;
-            background: rgba(20, 135, 217, 0.034);
+            background: rgba(18, 17, 16, 0.6);
+            /* dark, matching COLORS.bg, instead of the old blue tint */
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
             position: relative;
-            border-top: 1px solid rgba(44, 168, 199, 0.045);
-            border-bottom: 1px solid rgba(44, 168, 199, 0.045);
+            border-top: 1px solid rgba(77, 1, 25, 0.4);
+            border-bottom: 1px solid rgba(77, 1, 25, 0.4);
             opacity: 0;
             pointer-events: none;
             transition: opacity 0.18s ease;
@@ -75,28 +89,59 @@
             transition: transform 0.15s ease;
         }
 
+        /* idle peers now read as muted grey, same as PeerConstellation.js's
+           idle node state on mobile — cherry is reserved for "you're about
+           to send to this one," not the default resting look.
+           NEW — now centers whatever avatar emoji renderPeers() puts
+           inside it, instead of being a flat empty circle. falls back to
+           an empty circle automatically if peer.avatarId isn't there yet
+           (see the note in the script below re: server.js) */
         .orb {
-            width: 26px;
-            height: 26px;
+            width: 38px;
+            height: 38px;
             border-radius: 50%;
-            background: radial-gradient(circle, #c9a084, #5a463a);
-            box-shadow: 0 0 0 1px rgba(240, 201, 138, 0.15);
+            background: radial-gradient(circle, #5A544C, #2A2724);
+            box-shadow: 0 0 0 1px rgba(138, 133, 128, 0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            line-height: 1;
+            overflow: hidden; /* NEW — keeps the square avatar art clipped to the circle instead of poking out the corners */
         }
 
+        /* FIXED — border-radius directly on the <img> itself (not just
+           relying on .orb's overflow:hidden above) is what actually
+           forces a circular crop regardless of what the source PNG
+           looks like — square, white background, whatever. object-fit:
+           cover fills the whole circle without stretching, cropping any
+           excess instead of leaving a gap around the edges. */
+        .orb img {
+            width: 37px;
+            height: 37px;
+            border-radius: 50%;
+            object-fit: cover;
+        }
+
+        /* drag-over = targeted = cherry, matching COLORS.amber's new value
+           exactly, same as the "outgoing" node color on mobile */
         .orb-wrap.drag-over .orb {
-            background: radial-gradient(circle, #fff6e0, #f0c98a);
+            background: radial-gradient(circle, #FCE8ED, #D9708F);
+            box-shadow: 0 0 0 1px rgba(140, 26, 63, 0.5);
             transform: scale(1.15);
         }
 
         .orb-label {
             font-size: 9px;
-            color: #8a6a52;
+            color: #8A8580;
+            /* COLORS.mutedText */
         }
 
         #dropHint {
             font-size: 0px;
             letter-spacing: 1px;
-            color: #4a3a30;
+            color: #8A8580;
+            /* COLORS.mutedText — was invisible before too (font-size: 0), left as-is, just made the color consistent in case that ever gets fixed */
         }
     </style>
 </head>
@@ -121,6 +166,33 @@
         const drawer = document.getElementById('drawer');
         let peers = [];
         let currentPin = null;
+
+        // CHANGED — matches AVATAR_PRESETS in mobile/components/AvatarPicker.js,
+        // ids and all. used to map straight to an emoji character; now maps
+        // to a real PNG sitting in an 'avatars' folder next to this file
+        // (same level as main.js/desktop.html/superhub.html) — drop the same
+        // 9 (soon 10) files you gave the mobile app in here too. avatarId
+        // passthrough itself is already working (server.js's room_update
+        // sends it, confirmed live), this just changes what renderPeers()
+        // does with it below.
+        // FIXED — these were pointing at renamed filenames
+        // (methcrackhead.png, coolLadyHehe.png, mrMime.png) that don't
+        // actually exist on disk. your AvatarPicker.js kept your real
+        // original filenames, so this now matches those exactly — same
+        // ids on the left (what the server sends), your actual filenames
+        // on the right (what's sitting in the avatars/ folder).
+        const AVATAR_IMAGE = {
+            wiseOldCreep: 'avatars/wiseOldCreep.png',
+            methcrackhead: 'avatars/edwardScissorNOHands.png',
+            coolLadyHehe: 'avatars/dontEvenJokeLad(y).png',
+            roidedDudeWithBow: 'avatars/roidedDudeWithBow.png',
+            hijabiNinja: 'avatars/hijabiNinja.png',
+            punkRockEntity: 'avatars/punkRockEntity.png',
+            ancientKarateLady: 'avatars/ancientKarateLady.png',
+            mrMime: 'avatars/mr.mime.png',
+            creepyChild: 'avatars/creepyChild.png',
+            // smirkingCat: 'avatars/smirkingCat.png', // NEW — uncomment once that file exists
+        };
 
         fetch('http://localhost:3000/api/pin')
             .then((res) => res.json())
@@ -148,9 +220,21 @@
                 const wrap = document.createElement('div');
                 wrap.className = 'orb-wrap';
                 wrap.dataset.deviceId = peer.deviceId;
-                wrap.style.left = `${130 + x - 13}px`;
-                wrap.style.top = `${90 + y - 13}px`;
-                wrap.innerHTML = `<div class="orb"></div><div class="orb-label">${peer.label}</div>`;
+                // FIXED — the -13 offset was half of the old 26px orb, used
+                // to center the orb on its computed position. now that .orb
+                // is 38px, half is 19 — left as-is this would've drifted the
+                // bigger orbs off-center from where the drag-target hit
+                // detection (peerPosition/dist<30 checks below) expects them.
+                wrap.style.left = `${130 + x - 19}px`;
+                wrap.style.top = `${90 + y - 19}px`;
+                const avatarSrc = AVATAR_IMAGE[peer.avatarId]; // undefined if it's an old/unknown id — falls back to the empty gradient circle below
+                // NEW — onerror hides the broken-image icon and logs exactly
+                // which file/path actually failed, instead of leaving a
+                // silent broken icon with no way to tell what went wrong.
+                const orbContent = avatarSrc
+                    ? `<img src="${avatarSrc}" alt="" onerror="this.style.display='none'; console.error('avatar image failed to load:', this.src, '— check that the file actually exists at that path in the avatars/ folder');">`
+                    : '';
+                wrap.innerHTML = `<div class="orb">${orbContent}</div><div class="orb-label">${peer.label}</div>`;
                 field.appendChild(wrap);
             });
         }
@@ -215,13 +299,6 @@
             e.preventDefault();
         });
 
-        // FIXED — this had been reduced to a placeholder comment,
-        // meaning drops silently did nothing at all. this is the real,
-        // complete handler again, with the shared deviceId (read from
-        // the URL above) included — that's the line that lets the
-        // server tell "the laptop sent this" apart from "a phone sent
-        // this," which is what stops the laptop from notifying/
-        // accepting its own uploads.
         document.body.addEventListener('drop', async (e) => {
             e.preventDefault();
             clearTimeout(closeTimer);

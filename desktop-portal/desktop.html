@@ -25,12 +25,18 @@
             transition: all 0.15s ease-out; /* fast snap instead of a slow fade */
         }
 
-        /* this class gets added/removed by javascript to turn the glow on/off */
+        /* this class gets added/removed by javascript to turn the glow on/off.
+           recolored to match COLORS.amber (now #8C1A3F, deep cherry/burgundy)
+           instead of the old teal — same family as the mobile app and
+           superhub.html now. opacity kept at 0.3 (close to the original
+           teal's 0.301) so the intensity doesn't change, just the hue —
+           at full-screen scale it should still read as a felt "thump"
+           pulse, not an alert flash. */
         .buzzing {
             /* you NEED some tiny bit of background here or some computers
                just refuse to render the glow at all, it's a weird quirk */
             background: rgba(0, 0, 0, 0.001) !important;
-            box-shadow: inset 0 0 50px 10px rgba(18, 128, 145, 0.301) !important;
+            box-shadow: inset 0 0 50px 10px rgba(140, 26, 63, 0.3) !important;
             animation: haptic-shake 0.1s linear infinite;
         }
 
@@ -78,6 +84,7 @@
         const { shell, ipcRenderer } = require('electron');
         const fs = require('fs');
         const path = require('path');
+        const os = require('os'); // NEW — used below so the phone shows your laptop's actual name instead of "unknown device"
 
         // NEW: read the shared machine id main.js passed in, instead of
         // generating our own — this is what lets the server recognize
@@ -102,7 +109,13 @@
             const res = await fetch('http://localhost:3000/api/pin');
             const { pin } = await res.json();
 
-            ws.send(JSON.stringify({ type: 'join', pin, role: 'desktop', deviceId }));
+            // FIXED — this never sent a label at all, which is exactly why
+            // your phone was showing "unknown device": the server had
+            // nothing to fall back to. os.hostname() is your actual
+            // computer's name (whatever shows in your system settings) —
+            // swap the string default below if you'd rather it always say
+            // something specific like 'laptop'.
+            ws.send(JSON.stringify({ type: 'join', pin, role: 'desktop', deviceId, label: os.hostname() || 'laptop' }));
         };
 
         // --- THE HAPTIC FUNCTION ---
