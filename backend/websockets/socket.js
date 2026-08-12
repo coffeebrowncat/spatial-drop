@@ -41,8 +41,12 @@ function setupWebSockets(server) {
                     }
                     const room = activeRooms.get(pin);
 
+                    // CHANGED — friendlier copy. App.js already reads
+                    // data.error and triggers the wrong-pin shake for it
+                    // (see handleIncoming), it just never actually displayed
+                    // the text anywhere — that's fixed on the App.js side.
                     if (room.size >= 5) {
-                        return ws.send(JSON.stringify({ error: 'room is full bro' }));
+                        return ws.send(JSON.stringify({ error: 'too many people in this room rn, sorry — try again in a sec' }));
                     }
 
                     ws.role = data.role || null;
