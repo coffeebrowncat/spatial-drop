@@ -64,6 +64,82 @@
                 transform: translate(1px, -3px);
             }
         }
+
+        /* NEW — replaces the native browser confirm() dialog, which was
+           ugly, blocking, and looked nothing like the rest of the app
+           (system font, system chrome, no way to style it at all).
+           colors pulled straight from superhub.html's already-established
+           palette (graphite bg, cherry accents) instead of inventing new
+           ones, so this actually looks like it belongs to the same app. */
+        #transferModal {
+            position: fixed;
+            bottom: 40px;
+            right: 40px;
+            width: 300px;
+            background: rgba(18, 17, 16, 0.95);
+            border: 1px solid rgba(77, 1, 25, 0.5);
+            border-radius: 14px;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+            padding: 18px 20px;
+            font-family: -apple-system, sans-serif;
+            opacity: 0;
+            transform: translateY(12px);
+            pointer-events: none;
+            transition: opacity 0.18s ease, transform 0.18s ease;
+        }
+
+        #transferModal.show {
+            opacity: 1;
+            transform: translateY(0);
+            pointer-events: auto;
+        }
+
+        #transferModal .modalTitle {
+            color: #F2EDE6;
+            font-size: 13px;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+            margin-bottom: 6px;
+        }
+
+        #transferModal .modalFiles {
+            color: #8A8580;
+            font-size: 11px;
+            line-height: 1.5;
+            max-height: 80px;
+            overflow-y: auto;
+            margin-bottom: 16px;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        #transferModal .modalButtons {
+            display: flex;
+            gap: 10px;
+        }
+
+        #transferModal button {
+            flex: 1;
+            border: none;
+            border-radius: 20px;
+            padding: 9px 0;
+            font-family: -apple-system, sans-serif;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            cursor: pointer;
+        }
+
+        #transferModal .declineBtn {
+            background: transparent;
+            border: 1px solid rgba(138, 133, 128, 0.3);
+            color: #8A8580;
+        }
+
+        #transferModal .acceptBtn {
+            background: rgba(140, 26, 63, 0.85);
+            color: #F2EDE6;
+        }
     </style>
 </head>
 
@@ -76,6 +152,17 @@
     <div id="dropZone">
         ----
         <span>drop here</span>
+    </div>
+
+    <!-- NEW — replaces confirm(). hidden/inert until an incoming_files
+         message actually shows it. -->
+    <div id="transferModal">
+        <div class="modalTitle" id="modalTitle">incoming files</div>
+        <div class="modalFiles" id="modalFiles"></div>
+        <div class="modalButtons">
+            <button class="declineBtn" id="declineBtn">decline</button>
+            <button class="acceptBtn" id="acceptBtn">accept</button>
+        </div>
     </div>
 
     <script>
@@ -171,8 +258,51 @@
             }, 400);
         }
 
+        // --- NEW: the modal that replaces confirm() ---
+        // this window is click-through by default (setIgnoreMouseEvents in
+        // main.js) so the transparent overlay never blocks clicks on
+        // whatever's behind it. that's a problem the second we need real
+        // buttons on screen — a click-through window can't receive a click
+        // on its own buttons either. so: tell main.js to turn click-through
+        // OFF right before the modal appears, and back ON the instant it's
+        // resolved (accept, decline, or timeout), so the rest of the
+        // fullscreen overlay stays exactly as invisible/unclickable as
+        // before.
+        const modal = document.getElementById('transferModal');
+        const modalFiles = document.getElementById('modalFiles');
+        const acceptBtn = document.getElementById('acceptBtn');
+        const declineBtn = document.getElementById('declineBtn');
+
+        function showTransferModal(label, fileNames) {
+            return new Promise((resolve) => {
+                modalFiles.textContent = fileNames.join('\n');
+                document.getElementById('modalTitle').textContent = `accept ${label}?`;
+                modal.classList.add('show');
+                ipcRenderer.send('modal-visibility', true);
+
+                // auto-decline after 20s so an ignored request doesn't just
+                // sit there forever leaving the sender hanging with no answer
+                const autoDecline = setTimeout(() => finish(false), 20000);
+
+                function finish(accepted) {
+                    clearTimeout(autoDecline);
+                    modal.classList.remove('show');
+                    ipcRenderer.send('modal-visibility', false);
+                    acceptBtn.removeEventListener('click', onAccept);
+                    declineBtn.removeEventListener('click', onDecline);
+                    resolve(accepted);
+                }
+
+                function onAccept() { finish(true); }
+                function onDecline() { finish(false); }
+
+                acceptBtn.addEventListener('click', onAccept);
+                declineBtn.addEventListener('click', onDecline);
+            });
+        }
+
         // --- REAL TRIGGER: stuff coming from the phone ---
-        ws.onmessage = (event) => {
+        ws.onmessage = async (event) => {
             const data = JSON.parse(event.data);
 
             // the phone just sent files and is asking "hey, want these?"
@@ -187,8 +317,12 @@
                 }
 
                 // first time seeing this pairing this session, so actually ask
+                // CHANGED — was a native confirm() dialog (system font,
+                // system chrome, freezes the page until dismissed). now a
+                // real styled card matching the rest of the app, and it
+                // doesn't block anything else while it's up.
                 const label = data.count > 1 ? `${data.count} files` : 'a file';
-                const accepted = confirm(`accept ${label} from phone?\n\n${data.fileNames.join('\n')}`);
+                const accepted = await showTransferModal(label, data.fileNames);
 
                 ws.send(JSON.stringify({
                     type: accepted ? 'accept_transfer' : 'decline_transfer',
