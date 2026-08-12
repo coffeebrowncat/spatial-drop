@@ -14,7 +14,21 @@ const getPin = (req, res) => {
 const uploadFiles = (req, res) => {
     const roomId = req.body.roomId;
     const senderId = req.body.deviceId;
-    const targetId = req.body.targetId || null;
+
+    // CHANGED — was a single 'targetId' field (one peer or, if absent,
+    // everyone). the app can now select several specific peers in one
+    // go without kicking anyone else out of the room, so this is a JSON-
+    // encoded array of deviceIds instead of one string. still defaults
+    // to "everyone" when empty/missing/malformed, same as before.
+    let targetIds = [];
+    if (req.body.targetIds) {
+        try {
+            const parsed = JSON.parse(req.body.targetIds);
+            if (Array.isArray(parsed)) targetIds = parsed;
+        } catch (e) {
+            targetIds = []; // malformed field — fail open to "everyone" rather than dropping the transfer
+        }
+    }
 
     if (!req.files || req.files.length === 0) {
         return res.status(400).json({ error: 'no files received' });
@@ -33,7 +47,7 @@ const uploadFiles = (req, res) => {
         activeRooms.get(roomId).forEach(client => {
             if (client.readyState !== WebSocket.OPEN) return;
             if (client.deviceId === senderId) return;
-            if (targetId && client.deviceId !== targetId) return;
+            if (targetIds.length > 0 && !targetIds.includes(client.deviceId)) return;
 
             client.send(JSON.stringify({
                 type: 'incoming_files',
@@ -45,7 +59,7 @@ const uploadFiles = (req, res) => {
         });
     }
 
-    console.log(`[HTTP POST] holding ${req.files.length} file(s), waiting on accept/decline. target: ${targetId || 'everyone'}`);
+    console.log(`[HTTP POST] holding ${req.files.length} file(s), waiting on accept/decline. target: ${targetIds.length > 0 ? targetIds.join(', ') : 'everyone'}`);
     res.status(201).json({ success: true, transferId });
 };
 
