@@ -42,7 +42,20 @@ let portalWindow; // NEW — this used to be a local variable inside createPorta
 // everything outside that function. lifted to module scope so the self-healing
 // interval below can actually reach it, same as superhubWindow already could.
 
-const DRAWER_HEIGHT = 240;
+// FIXED — was 240, with #drawer's CSS only filling 60% of that (~142.56px
+// visible), leaving ~96px of invisible window below the drawer that still
+// caught every click (Electron windows capture events across their full
+// rectangle regardless of what's drawn). 144 + #drawer at height:100%
+// lands on the exact same ~142.56px visible size as before (0.99*144 =
+// 142.56, matching the old 0.99*0.6*240) — the drawer looks identical,
+// only the dead zone below it is gone.
+//
+// IMPORTANT — this won't take effect from electron-reload's hot reload.
+// electron-reload only refreshes the HTML/CSS/JS inside existing windows;
+// it can't re-run `new BrowserWindow({height: ...})` with a new value on a
+// window that already exists. requires fully quitting and re-running
+// `npm start`, not just waiting for the auto-reload.
+const DRAWER_HEIGHT = 144;
 const DRAWER_WIDTH = 320;
 
 function createPortal() {
@@ -67,7 +80,19 @@ function createPortal() {
     portalWindow.setIgnoreMouseEvents(true, { forward: true });
     portalWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     portalWindow.loadFile('desktop.html', { search: `deviceId=${machineDeviceId}` });
-    portalWindow.webContents.openDevTools({ mode: 'detach' });
+    // FIXED — this used to open a full detached DevTools window
+    // unconditionally on every single launch. spinning up a whole
+    // separate DevTools frontend instance is a real, measurable chunk of
+    // startup time in Electron, every time, whether you're actually
+    // using it or not — almost certainly a real contributor to "startup
+    // takes forever." gated behind an explicit opt-in env var instead of
+    // removed outright, so it's still one command away when you actually
+    // need it: SPATIAL_DROP_DEVTOOLS=1 npm start (or set it in your
+    // terminal session). standard Ctrl+Shift+I / Cmd+Option+I still opens
+    // DevTools manually any time, with zero extra startup cost.
+    if (process.env.SPATIAL_DROP_DEVTOOLS === '1') {
+        portalWindow.webContents.openDevTools({ mode: 'detach' });
+    }
 }
 
 function createSuperHub() {
@@ -185,6 +210,18 @@ ipcMain.on('superhub-slide', (event, open) => slideSuperHub(open));
 // physical laptop only ever uses one room slot, not two
 ipcMain.on('peers-updated', (event, peers) => {
     if (superhubWindow) superhubWindow.webContents.send('peers-updated', peers);
+});
+
+// NEW — portalWindow is click-through by default (setIgnoreMouseEvents in
+// createPortal) so the fullscreen transparent overlay never eats clicks
+// meant for whatever's underneath it. the second desktop.html needs to show
+// a real clickable accept/decline card (replacing the old confirm() popup),
+// click-through has to switch off for as long as that card is on screen,
+// then switch back on the instant it's gone — otherwise either the card
+// can't be clicked, or the overlay permanently blocks your whole desktop.
+ipcMain.on('modal-visibility', (event, visible) => {
+    if (!portalWindow || portalWindow.isDestroyed()) return;
+    portalWindow.setIgnoreMouseEvents(!visible, { forward: true });
 });
 
 app.whenReady().then(() => {

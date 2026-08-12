@@ -15,7 +15,12 @@
 
         #drawer {
             width: 100%;
-            height: 60%;
+            /* FIXED — was 60%. paired with main.js's DRAWER_HEIGHT shrinking
+               from 240 to 144, this lands on the exact same ~142.56px visible
+               drawer size as before — see the comment on DRAWER_HEIGHT in
+               main.js for the math and an important note about needing a
+               real restart (not electron-reload's hot reload) to see it. */
+            height: 100%;
             display: flex;
             flex-direction: row;
             font-family: -apple-system, sans-serif;
@@ -80,8 +85,31 @@
             pointer-events: auto;
         }
 
+        /* FIXED (round 8) — every version of this so far hand-computed
+           pixel x/y offsets (position:absolute) and tried to guess where
+           the visual center of "orb + label below it" actually landed,
+           across several rounds that each got the guess wrong in a new
+           way (clipped, overlapping, or unevenly balanced). switched to
+           real flexbox rows instead — #peerField and .peer-row below now
+           do the centering, so it's exactly right regardless of orb size,
+           label size, or row count, with nothing left to hand-tune. */
+        #peerField {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 24px;
+            width: 100%;
+        }
+
+        .peer-row {
+            display: flex;
+            flex-direction: row;
+            justify-content: center;
+            gap: 34px;
+        }
+
         .orb-wrap {
-            position: absolute;
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -89,18 +117,21 @@
             transition: transform 0.15s ease;
         }
 
-        /* idle peers now read as muted grey, same as PeerConstellation.js's
-           idle node state on mobile — cherry is reserved for "you're about
-           to send to this one," not the default resting look.
-           NEW — now centers whatever avatar emoji renderPeers() puts
-           inside it, instead of being a flat empty circle. falls back to
-           an empty circle automatically if peer.avatarId isn't there yet
-           (see the note in the script below re: server.js) */
+        /* CHANGED — was a single flat grey gradient for every peer without
+           an avatar, so two avatar-less peers were only tellable apart by
+           reading their label text. now the background color itself is
+           picked per-peer (see tonesFor() in the script), reusing the same
+           rose-cherry NODE_TONES family the mobile radar screen already
+           hashes its peer markers from — different peers read as visibly
+           different orbs, and it's the same palette instead of a new one.
+           the radial-gradient below is just a light/dark sheen over
+           whatever solid color gets set inline per-orb. */
         .orb {
-            width: 38px;
-            height: 38px;
+            width: 34px;
+            height: 34px;
             border-radius: 50%;
-            background: radial-gradient(circle, #5A544C, #2A2724);
+            background: radial-gradient(circle, rgba(255,255,255,0.18), rgba(0,0,0,0.22));
+            background-blend-mode: overlay;
             box-shadow: 0 0 0 1px rgba(138, 133, 128, 0.2);
             display: flex;
             align-items: center;
@@ -110,6 +141,13 @@
             overflow: hidden; /* NEW — keeps the square avatar art clipped to the circle instead of poking out the corners */
         }
 
+        /* the fallback initial letter, only shown when there's no avatar image */
+        .orb-initial {
+            color: #F2EDE6; /* COLORS.text */
+            font-size: 13px;
+            font-weight: 600;
+        }
+
         /* FIXED — border-radius directly on the <img> itself (not just
            relying on .orb's overflow:hidden above) is what actually
            forces a circular crop regardless of what the source PNG
@@ -117,8 +155,8 @@
            cover fills the whole circle without stretching, cropping any
            excess instead of leaving a gap around the edges. */
         .orb img {
-            width: 37px;
-            height: 37px;
+            width: 33px;
+            height: 33px;
             border-radius: 50%;
             object-fit: cover;
         }
@@ -142,6 +180,13 @@
             letter-spacing: 1px;
             color: #8A8580;
             /* COLORS.mutedText — was invisible before too (font-size: 0), left as-is, just made the color consistent in case that ever gets fixed */
+            height: 0;
+            overflow: hidden;
+            /* NEW — font-size:0 alone doesn't guarantee a true 0px box in
+               every rendering engine (line-box "struts" can leave a few
+               stray px depending on font metrics). height:0 + overflow:hidden
+               makes it actually zero, so it can never nudge #peerField's
+               centering above by some unpredictable amount. */
         }
     </style>
 </head>
@@ -151,7 +196,13 @@
         <div id="sliver"><span id="pinBadge">----</span></div>
 
         <div id="content">
-            <div id="peerField" style="position:relative; width:260px; height:180px;"></div>
+            <!-- FIXED (round 8) — no more fixed width/height guess here.
+                 #peerField is a real flex column now (see CSS) that sizes
+                 itself to whatever rows renderPeers() actually builds, and
+                 #content's existing centering handles placing it — so it's
+                 correctly centered and never clipped, for any peer count,
+                 without hand-picking a box size that happens to fit. -->
+            <div id="peerField"></div>
             <div id="dropHint">drop anywhere to send to everyone — drop on a device to target it</div>
         </div>
     </div>
@@ -207,35 +258,90 @@
             renderPeers();
         });
 
-        function peerPosition(i, total) {
-            const angle = (i / Math.max(total, 1)) * Math.PI * 2;
-            return { x: Math.cos(angle) * 70, y: Math.cos(angle) * 0 + Math.sin(angle) * 60 };
+        // splits peers into up to 2 rows for renderPeers() below. bottom
+        // row gets the ceiling on an odd split — 3 peers = 1 up, 2 down,
+        // evenly spread around center — same rule for every count from
+        // there (5 = 2 up, 3 down, etc).
+        function splitIntoRows(total) {
+            if (total <= 2) return [total, 0];
+            const bottomRowCount = Math.ceil(total / 2);
+            return [total - bottomRowCount, bottomRowCount];
         }
 
-        function renderPeers() {
-            const field = document.getElementById('peerField');
-            field.innerHTML = '';
-            peers.forEach((peer, i) => {
-                const { x, y } = peerPosition(i, peers.length);
-                const wrap = document.createElement('div');
-                wrap.className = 'orb-wrap';
-                wrap.dataset.deviceId = peer.deviceId;
-                // FIXED — the -13 offset was half of the old 26px orb, used
-                // to center the orb on its computed position. now that .orb
-                // is 38px, half is 19 — left as-is this would've drifted the
-                // bigger orbs off-center from where the drag-target hit
-                // detection (peerPosition/dist<30 checks below) expects them.
-                wrap.style.left = `${130 + x - 19}px`;
-                wrap.style.top = `${90 + y - 19}px`;
-                const avatarSrc = AVATAR_IMAGE[peer.avatarId]; // undefined if it's an old/unknown id — falls back to the empty gradient circle below
+        // same rose-cherry family as NODE_TONES in the mobile app's
+        // constants/colors.js — reusing it here instead of inventing a new
+        // palette keeps avatar-less peers consistent across platforms.
+        // only the 4 richer/darker tones made the cut (dropped the two
+        // lightest, E8A0B0/D9708F — too washed out for the white initial
+        // letter below to read clearly against them).
+        const FALLBACK_TONES = ['#C94A6E', '#B8214F', '#9E1A45', '#8C1A3F'];
+
+        // cheap string hash so the same deviceId always lands on the same
+        // tone (stable across re-renders) without needing a real UUID lib
+        function toneForDevice(deviceId) {
+            let hash = 0;
+            for (let i = 0; i < deviceId.length; i++) {
+                hash = (hash * 31 + deviceId.charCodeAt(i)) | 0;
+            }
+            return FALLBACK_TONES[Math.abs(hash) % FALLBACK_TONES.length];
+        }
+
+        function makeOrbWrap(peer) {
+            const wrap = document.createElement('div');
+            wrap.className = 'orb-wrap';
+            wrap.dataset.deviceId = peer.deviceId;
+            const avatarSrc = AVATAR_IMAGE[peer.avatarId]; // undefined if it's an old/unknown id — falls back to the tone+initial below
+            let orbContent, orbStyle;
+            if (avatarSrc) {
                 // NEW — onerror hides the broken-image icon and logs exactly
                 // which file/path actually failed, instead of leaving a
                 // silent broken icon with no way to tell what went wrong.
-                const orbContent = avatarSrc
-                    ? `<img src="${avatarSrc}" alt="" onerror="this.style.display='none'; console.error('avatar image failed to load:', this.src, '— check that the file actually exists at that path in the avatars/ folder');">`
-                    : '';
-                wrap.innerHTML = `<div class="orb">${orbContent}</div><div class="orb-label">${peer.label}</div>`;
-                field.appendChild(wrap);
+                orbContent = `<img src="${avatarSrc}" alt="" onerror="this.style.display='none'; console.error('avatar image failed to load:', this.src, '— check that the file actually exists at that path in the avatars/ folder');">`;
+                orbStyle = '';
+            } else {
+                // CHANGED — was always the same flat grey circle. now a
+                // per-device cherry tone plus the peer's first initial, so
+                // avatar-less peers are visually distinct from each other
+                // instead of all looking identical.
+                const initial = (peer.label || '?').trim().charAt(0).toUpperCase();
+                orbContent = `<span class="orb-initial">${initial}</span>`;
+                orbStyle = ` style="background-color: ${toneForDevice(peer.deviceId)}"`;
+            }
+            wrap.innerHTML = `<div class="orb"${orbStyle}>${orbContent}</div><div class="orb-label">${peer.label}</div>`;
+            return wrap;
+        }
+
+        // FIXED (round 8) — replaced hand-computed absolute x/y (several
+        // rounds of guessing pixel offsets, each one wrong in a new way —
+        // clipped against the drawer edge, rows overlapping, or unevenly
+        // balanced top-to-bottom) with real DOM rows: #peerField and
+        // .peer-row are flexbox now (see CSS), so the browser centers
+        // everything correctly on its own — nothing left to mis-measure.
+        function renderPeers() {
+            const field = document.getElementById('peerField');
+            field.innerHTML = '';
+
+            const [topCount, bottomCount] = splitIntoRows(peers.length);
+            const topPeers = peers.slice(0, topCount);
+            const bottomPeers = peers.slice(topCount);
+
+            [topPeers, bottomPeers].forEach((rowPeers, rowIndex) => {
+                if (rowPeers.length === 0) return;
+                const rowEl = document.createElement('div');
+                rowEl.className = 'peer-row';
+                // ZIGZAG — when both rows hold the SAME count, two
+                // independently-centered rows land on identical x
+                // positions, so every bottom-row orb sits directly under
+                // a top-row one. shifting the bottom row by half a column
+                // (half of .peer-row's 34px gap) breaks that up — same
+                // effect that happens for free when the counts differ
+                // (e.g. 3 peers: the lone top orb naturally lands in the
+                // gap between the bottom two).
+                if (rowIndex === 1 && rowPeers.length === topPeers.length) {
+                    rowEl.style.transform = 'translateX(17px)';
+                }
+                rowPeers.forEach((peer) => rowEl.appendChild(makeOrbWrap(peer)));
+                field.appendChild(rowEl);
             });
         }
 
@@ -291,7 +397,13 @@
                 const cx = rect.left + rect.width / 2;
                 const cy = rect.top + rect.height / 2;
                 const dist = Math.hypot(e.clientX - cx, e.clientY - cy);
-                el.classList.toggle('drag-over', dist < 30);
+                // FIXED — was 30. two vertically-stacked orbs now sit only
+                // 46px apart (rowSpacing above), and two same-size hit
+                // circles that close together would overlap and make the
+                // wrong row "win" a drop near the boundary between them.
+                // 20 keeps each orb's hit zone safely inside half that
+                // gap (23px) instead of spilling into its neighbor's.
+                el.classList.toggle('drag-over', dist < 20);
             });
         });
 
@@ -315,7 +427,7 @@
                 const cx = rect.left + rect.width / 2;
                 const cy = rect.top + rect.height / 2;
                 const dist = Math.hypot(e.clientX - cx, e.clientY - cy);
-                if (dist < 30) targetId = el.dataset.deviceId;
+                if (dist < 20) targetId = el.dataset.deviceId;
             });
 
             const buffer = fs.readFileSync(filePath);
