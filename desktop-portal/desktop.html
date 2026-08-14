@@ -321,7 +321,8 @@
                 // system chrome, freezes the page until dismissed). now a
                 // real styled card matching the rest of the app, and it
                 // doesn't block anything else while it's up.
-                const label = data.count > 1 ? `${data.count} files` : 'a file';
+                const senderName = data.senderName || 'someone';
+                const label = data.count > 1 ? `${data.count} files from ${senderName}` : `a file from ${senderName}`;
                 const accepted = await showTransferModal(label, data.fileNames);
 
                 ws.send(JSON.stringify({
