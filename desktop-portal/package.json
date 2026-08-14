@@ -23,11 +23,30 @@
       "**/*",
       "!transfers.db"
     ],
+    "extraResources": [
+      {
+        "from": "../backend",
+        "to": "backend",
+        "filter": ["**/*", "!node_modules", "!node_modules/**"]
+      },
+      {
+        "from": "../backend/node_modules",
+        "to": "backend/node_modules",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../.env",
+        "to": ".env"
+      }
+    ],
+    "npmRebuild": false,
+    "compression": "store",
     "mac": {
       "target": "dmg"
     },
     "win": {
-      "target": "nsis"
+      "target": "portable",
+      "signExecutable": false
     }
   }
 }
