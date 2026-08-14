@@ -43,6 +43,17 @@ const uploadFiles = (req, res) => {
         timeout
     });
 
+    // NEW — look up the sender's own client record so we can tell
+    // receivers WHO is actually sending, not just that "someone" is.
+    // ws.label is set from the name typed on the entry screen (see
+    // websockets/socket.js join handler) — that's the real display
+    // name, not a hardcoded device type like "Phone".
+    let senderName = 'someone';
+    if (activeRooms.has(roomId)) {
+        const senderClient = [...activeRooms.get(roomId)].find(c => c.deviceId === senderId);
+        if (senderClient && senderClient.label) senderName = senderClient.label;
+    }
+
     if (activeRooms.has(roomId)) {
         activeRooms.get(roomId).forEach(client => {
             if (client.readyState !== WebSocket.OPEN) return;
@@ -54,7 +65,9 @@ const uploadFiles = (req, res) => {
                 transferId,
                 count: req.files.length,
                 fileNames: req.files.map(f => f.originalname),
-                trusted: trustedRooms.has(roomId)
+                trusted: trustedRooms.has(roomId),
+                fromDeviceId: senderId,
+                senderName
             }));
         });
     }
